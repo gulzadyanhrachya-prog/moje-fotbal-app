@@ -15,8 +15,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎾 Tennis H2H Predictor")
-st.caption("Analýza vzájemných zápasů a výpočet férových kurzů.")
+st.title("🎾 Tennis H2H Predictor (Final)")
 
 # ==============================================================================
 # 2. NAČTENÍ KLÍČE
@@ -28,14 +27,13 @@ except:
     api_key = st.sidebar.text_input("Vlož X-RapidAPI-Key:", type="password")
 
 # ==============================================================================
-# 3. VSTUPY (ID HRÁČŮ)
+# 3. VSTUPY
 # ==============================================================================
 st.sidebar.header("Nastavení Zápasu")
-# Předvyplněno: Djokovič (5992) vs Nadal (677)
-p1_id = st.sidebar.text_input("ID Hráče 1:", value="5992")
-p2_id = st.sidebar.text_input("ID Hráče 2:", value="677")
+p1_id = st.sidebar.text_input("ID Hráče 1:", value="5992") # Djokovič
+p2_id = st.sidebar.text_input("ID Hráče 2:", value="677")  # Nadal
 
-# Pevně daná URL, která fungovala v průzkumníku
+# Pevně daná URL (stejná jako v Exploreru)
 url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/h2h"
 host = "tennis-api-atp-wta-itf.p.rapidapi.com"
 
@@ -51,39 +49,57 @@ if st.button("🚀 Analyzovat zápas"):
             "X-RapidAPI-Host": host
         }
         
-        # Parametry pro GET request
-        params = {
-            "player1_id": p1_id,
-            "player2_id": p2_id
-        }
+        # Zkusíme poslat ID jako čísla (int), to je pro API bezpečnější
+        try:
+            params = {
+                "player1_id": int(p1_id),
+                "player2_id": int(p2_id)
+            }
+        except:
+            st.error("ID musí být čísla!")
+            st.stop()
         
-        with st.spinner("Stahuji historická data..."):
+        with st.spinner("Stahuji data..."):
             try:
-                # ZMĚNA: Vráceno zpět na GET, který fungoval
+                # Používáme GET (stejně jako v Exploreru)
                 response = requests.get(url, headers=headers, params=params)
-                data = response.json()
                 
-                # Kontrola chyb API
-                if "message" in data:
-                    st.error(f"Chyba API: {data['message']}")
+                # --- DEBUG SEKCE (Pro zjištění chyby) ---
+                with st.expander("🛠️ Debug Info (Pokud to nefunguje, podívej se sem)"):
+                    st.write(f"**URL:** {url}")
+                    st.write(f"**Status Code:** {response.status_code}")
+                    st.write(f"**Posílané parametry:** {params}")
+                    st.write("**Odpověď serveru:**")
+                    st.text(response.text)
+                # ----------------------------------------
+
+                data = response.json()
+
+                # Kontrola chyb
+                if response.status_code != 200:
+                    st.error(f"Chyba komunikace: {response.status_code}")
                     st.stop()
 
-                # Zpracování dat podle tvého JSONu
-                # Struktura je: {"data": [ { "player1": {...}, "player2": {...} } ] }
+                if "message" in data:
+                    st.error(f"API hlásí chybu: {data['message']}")
+                    st.stop()
+
+                # Zpracování dat
                 match_data = None
                 
-                if 'data' in data and len(data['data']) > 0:
-                    # Bereme první záznam, který obvykle obsahuje souhrn
+                # Logika pro nalezení správných dat v JSONu
+                if 'data' in data and isinstance(data['data'], list) and len(data['data']) > 0:
                     match_data = data['data'][0]
+                elif isinstance(data, list) and len(data) > 0:
+                    match_data = data[0]
                 
                 if not match_data:
-                    st.warning("Nebyla nalezena žádná vzájemná historie pro tato ID.")
-                    st.json(data)
+                    st.warning("API vrátilo prázdná data. Zkontroluj ID hráčů.")
                 else:
                     # ==========================================================
                     # 5. VÝPOČTY A PREDIKCE
                     # ==========================================================
-                    # Načtení dat z JSONu
+                    # Bezpečné načtení hodnot (s ochranou proti chybějícím klíčům)
                     p1_obj = match_data.get('player1', {})
                     p2_obj = match_data.get('player2', {})
                     
@@ -102,8 +118,8 @@ if st.button("🚀 Analyzovat zápas"):
                         p1_prob = p1_wins / total_matches
                         p2_prob = p2_wins / total_matches
                         
-                        p1_odd = round(1 / p1_prob, 2)
-                        p2_odd = round(1 / p2_prob, 2)
+                        p1_odd = round(1 / p1_prob, 2) if p1_prob > 0 else 99.0
+                        p2_odd = round(1 / p2_prob, 2) if p2_prob > 0 else 99.0
                     else:
                         p1_prob = 0.5
                         p2_prob = 0.5
@@ -114,7 +130,6 @@ if st.button("🚀 Analyzovat zápas"):
                     # 6. VYKRESLENÍ UI
                     # ==========================================================
                     
-                    # Hlavička zápasu
                     c1, c2, c3 = st.columns([2, 1, 2])
                     with c1:
                         st.markdown(f"<h2 style='text-align: center;'>{p1_name} <small>({p1_country})</small></h2>", unsafe_allow_html=True)
@@ -128,14 +143,10 @@ if st.button("🚀 Analyzovat zápas"):
                     
                     st.divider()
                     
-                    # Predikce
                     st.subheader("📊 Predikce modelu")
-                    
-                    # Progress bar
                     st.write(f"Pravděpodobnost výhry: **{p1_name} ({int(p1_prob*100)}%)** vs **{p2_name} ({int(p2_prob*100)}%)**")
                     st.progress(p1_prob)
                     
-                    # Karty s kurzy
                     col_pred1, col_pred2 = st.columns(2)
                     
                     with col_pred1:
@@ -161,10 +172,6 @@ if st.button("🚀 Analyzovat zápas"):
                             """, unsafe_allow_html=True)
                         else:
                             st.metric(f"Kurz {p2_name}", p2_odd)
-                            
-                    # Zobrazení surových dat (pro kontrolu)
-                    with st.expander("🔍 Zobrazit detailní JSON data"):
-                        st.json(match_data)
 
             except Exception as e:
                 st.error(f"Chyba aplikace: {e}")
