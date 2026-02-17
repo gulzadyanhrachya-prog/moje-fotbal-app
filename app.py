@@ -3,91 +3,60 @@ import requests
 import pandas as pd
 import json
 
-# ==============================================================================
-# 1. NASTAVENÍ STRÁNKY
-# ==============================================================================
-st.set_page_config(page_title="Můj RapidAPI Projekt", layout="wide")
+# 1. Nastavení stránky
+st.set_page_config(page_title="RapidAPI Explorer", layout="wide")
 st.title("🚀 RapidAPI Data Viewer")
+st.caption("Nejdřív musíme zjistit, jak tvé API posílá data, abychom mohli postavit model.")
 
-# ==============================================================================
-# 2. NAČTENÍ KLÍČE (BEZPEČNĚ)
-# ==============================================================================
-# Aplikace se nejdřív podívá do tajných "Secrets" na Streamlit Cloudu.
-# Pokud tam klíč není (např. testuješ lokálně), zeptá se tě v bočním menu.
+# 2. Načtení klíče (Bezpečně ze Secrets)
 try:
     api_key = st.secrets["RAPIDAPI_KEY"]
-    st.sidebar.success("✅ API Klíč načten ze systému")
+    st.sidebar.success("✅ API Klíč načten")
 except:
-    api_key = st.sidebar.text_input("Vlož svůj X-RapidAPI-Key:", type="password")
-    if not api_key:
-        st.warning("⬅️ Pro pokračování vlož API klíč do menu vlevo.")
-        st.stop()
+    api_key = st.sidebar.text_input("Vlož X-RapidAPI-Key:", type="password")
 
-# ==============================================================================
-# 3. KONFIGURACE API (Zde zadáš údaje z RapidAPI webu)
-# ==============================================================================
+# 3. Konfigurace API (Zde zadáš údaje z webu RapidAPI)
 st.sidebar.header("Nastavení Endpointu")
-st.sidebar.info("Tyto údaje najdeš na RapidAPI v sekci 'Code Snippets'")
+url = st.sidebar.text_input("URL (např. https://api-football-v1...):")
+host = st.sidebar.text_input("Host (např. api-football-v1.p.rapidapi.com):")
+params_str = st.sidebar.text_input("Parametry (JSON, např. {'league':'39', 'season':'2023'}):", value="{}")
 
-# Předvyplněné hodnoty (můžeš si je v kódu změnit na své API, abys to nemusel vypisovat)
-default_url = "https://api-football-v1.p.rapidapi.com/v3/leagues"
-default_host = "api-football-v1.p.rapidapi.com"
-
-url = st.sidebar.text_input("URL Endpointu:", value=default_url)
-host = st.sidebar.text_input("X-RapidAPI-Host:", value=default_host)
-params_input = st.sidebar.text_input("Parametry (volitelné, např. {'id':'39'}):", value="{}")
-
-# ==============================================================================
-# 4. STAŽENÍ A ZOBRAZENÍ DAT
-# ==============================================================================
-if st.button("📡 Stáhnout data z API"):
-    if not url or not host:
-        st.error("Chybí URL nebo Host!")
+# 4. Tlačítko pro stažení
+if st.button("📡 Stáhnout data"):
+    if not api_key or not url or not host:
+        st.error("Chybí klíč, URL nebo Host!")
     else:
         headers = {
             "X-RapidAPI-Key": api_key,
             "X-RapidAPI-Host": host
         }
         
-        # Převod parametrů z textu na slovník
         try:
-            querystring = json.loads(params_input)
-        except:
-            st.error("Chyba v parametrech. Musí to být platný JSON (např. {}).")
-            st.stop()
-
-        with st.spinner("Komunikuji se serverem..."):
-            try:
-                response = requests.get(url, headers=headers, params=querystring)
+            # Převod parametrů z textu na slovník
+            params = json.loads(params_str)
+            
+            with st.spinner("Stahuji data..."):
+                response = requests.get(url, headers=headers, params=params)
                 
-                # Kontrola stavu
                 if response.status_code != 200:
                     st.error(f"Chyba API: {response.status_code}")
                     st.text(response.text)
                 else:
                     data = response.json()
-                    st.success("Data úspěšně stažena!")
-
-                    # A. Zobrazení surových dat (pro vývojáře)
-                    with st.expander("🔍 Zobrazit surový JSON (Struktura dat)", expanded=True):
-                        st.json(data)
-
-                    # B. Pokus o tabulku
-                    st.subheader("📊 Náhled dat")
-                    # RapidAPI vrací data často v klíči 'response', 'data' nebo 'results'
-                    found_data = None
-                    if isinstance(data, list):
-                        found_data = data
-                    elif 'response' in data:
-                        found_data = data['response']
-                    elif 'data' in data:
-                        found_data = data['data']
+                    st.success("Data stažena!")
                     
-                    if found_data and isinstance(found_data, list):
-                        df = pd.json_normalize(found_data)
-                        st.dataframe(df, use_container_width=True)
+                    # Zobrazení JSONu (tohle potřebujeme vidět!)
+                    st.subheader("🔍 Struktura dat (JSON)")
+                    st.json(data)
+                    
+                    # Pokus o tabulku
+                    st.subheader("📊 Tabulka")
+                    # RapidAPI má data často v 'response'
+                    if 'response' in data:
+                        df = pd.json_normalize(data['response'])
+                        st.dataframe(df)
                     else:
-                        st.info("Data nejsou v jednoduchém seznamu, podívej se do JSONu výše.")
+                        st.write("Data nejsou v klíči 'response', podívej se do JSONu výše.")
 
-            except Exception as e:
-                st.error(f"Nastala chyba v aplikaci: {e}")
+        except Exception as e:
+            st.error(f"Chyba: {e}")
