@@ -2,76 +2,68 @@ import streamlit as st
 import requests
 import pandas as pd
 import json
-from datetime import datetime
 
-# 1. Nastavení stránky
-st.set_page_config(page_title="Sofascore API Explorer", layout="wide")
-st.title("🕵️‍♂️ Průzkumník Sofascore/Sport API")
-st.caption("Toto API je obrovské. Pojďme najít správná data pro predikce.")
+st.set_page_config(page_title="FotMob Data Explorer", layout="wide")
+st.title("⚽ FotMob Match Data Viewer")
 
-# 2. Načtení klíče
+# 1. Načtení klíče
 try:
     api_key = st.secrets["RAPIDAPI_KEY"]
     st.sidebar.success("✅ API Klíč načten")
 except:
     api_key = st.sidebar.text_input("Vlož X-RapidAPI-Key:", type="password")
 
-# 3. Konfigurace Endpointu
+# 2. Nastavení Endpointu (Hledáme zápasy)
 st.sidebar.header("Nastavení")
 
-# Zde vlož URL z RapidAPI (sekce 'Events', 'Matches' nebo 'Schedule')
-# Příklad pro Sofascore klony: https://api-sofascore.p.rapidapi.com/events/schedule/date
-default_url = st.sidebar.text_input("URL Endpointu:", value="")
-default_host = st.sidebar.text_input("X-RapidAPI-Host:", value="")
+# Zde vlož URL z RapidAPI sekce 'Matches' nebo 'League Matches'
+# Příklad pro FotMob API: https://.../leagues or https://.../matches
+url = st.sidebar.text_input("URL Endpointu (Matches/League):")
+host = st.sidebar.text_input("X-RapidAPI-Host:")
 
-# Výběr data (API většinou vyžaduje formát YYYY-MM-DD)
-selected_date = st.sidebar.date_input("Vyber datum zápasů:", datetime.now())
-date_str = selected_date.strftime("%Y-%m-%d")
+# 3. Parametry pro FotMob
+# FotMob většinou vyžaduje ID ligy (47 = Premier League) a sezónu
+st.sidebar.info("Zkusíme stáhnout zápasy pro Premier League (ID 47)")
+params_str = st.sidebar.text_input("Parametry (JSON):", value='{"id": "47", "season": "2023/2024"}')
 
-# Parametry (Sofascore často používá 'date' nebo je datum přímo v URL)
-# Zkusíme univerzální parametry
-params = {
-    "date": date_str,
-    "sport": "football" # Někdy API vyžaduje specifikaci sportu
-}
-
-if st.button("📡 Stáhnout data"):
-    if not api_key or not default_url:
+if st.button("📡 Stáhnout zápasy"):
+    if not api_key or not url:
         st.error("Chybí Klíč nebo URL!")
     else:
         headers = {
             "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": default_host
+            "X-RapidAPI-Host": host
         }
         
-        with st.spinner(f"Stahuji data pro {date_str}..."):
-            try:
-                # Některá API mají datum přímo v URL (např. .../events/2024-05-20)
-                # Zkusíme poslat parametry, pokud to API podporuje
-                response = requests.get(default_url, headers=headers, params=params)
+        try:
+            params = json.loads(params_str)
+            with st.spinner("Stahuji zápasy..."):
+                response = requests.get(url, headers=headers, params=params)
                 data = response.json()
                 
-                # 1. Zobrazení JSONu (Klíčové pro nás!)
+                # 1. Zobrazení JSONu (Tohle je klíčové!)
                 st.subheader("🔍 Struktura dat")
-                st.write("Podívej se, jestli vidíš 'homeTeam', 'awayTeam', 'score'.")
+                st.write("Hledej slova jako 'matches', 'fixtures', 'results', 'home', 'away'.")
                 st.json(data)
                 
-                # 2. Pokus o nalezení seznamu zápasů
-                # Sofascore často vrací data v klíči 'events' nebo 'tournaments'
-                found_events = []
+                # 2. Pokus o nalezení zápasů v datech
+                # FotMob má často strukturu: response -> matches -> allMatches
+                found_matches = []
                 
-                if 'events' in data:
-                    found_events = data['events']
-                elif 'response' in data:
-                    found_events = data['response']
+                # Univerzální hledač seznamů
+                if 'matches' in data:
+                    found_matches = data['matches']
+                elif 'response' in data and 'matches' in data['response']:
+                    found_matches = data['response']['matches']
+                elif 'allMatches' in data:
+                    found_matches = data['allMatches']
                 
-                if found_events:
-                    st.success(f"Nalezeno {len(found_events)} událostí!")
-                    # Rychlý výpis prvních 3 zápasů pro kontrolu
-                    for i, event in enumerate(found_events[:3]):
-                        st.info(f"Zápas {i+1}: {event}")
+                if found_matches:
+                    st.success(f"Nalezeno {len(found_matches)} zápasů!")
+                    # Ukázka prvního zápasu
+                    st.info(f"První zápas v datech: {found_matches[0]}")
                 else:
-                    st.warning("Nevidím klíč 'events' ani 'response'. Musíš prozkoumat JSON výše.")
+                    st.warning("Data stažena, ale nenašel jsem seznam zápasů. Podívej se do JSONu výše.")
 
-            except Exception as e:
-                st.error(f"Chyba: {e}")
+        except Exception as e:
+            st.error(f"Chyba: {e}")
