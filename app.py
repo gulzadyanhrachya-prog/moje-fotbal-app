@@ -10,7 +10,6 @@ st.set_page_config(page_title="Tennis Pro Analyst", layout="wide", page_icon="�
 
 st.markdown("""
 <style>
-    .big-font { font-size: 24px !important; font-weight: bold; }
     .winner-box { border: 2px solid #4CAF50; padding: 20px; border-radius: 10px; background-color: #f0fff4; text-align: center; }
     .vs-text { font-size: 30px; font-weight: bold; color: #555; text-align: center; padding-top: 20px; }
 </style>
@@ -36,7 +35,7 @@ st.sidebar.header("Nastavení Zápasu")
 p1_id = st.sidebar.text_input("ID Hráče 1:", value="5992")
 p2_id = st.sidebar.text_input("ID Hráče 2:", value="677")
 
-# URL Endpointu (H2H) - Zde je ta změna, ujistíme se, že je to správná URL
+# Pevně daná URL, která fungovala v průzkumníku
 url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/h2h"
 host = "tennis-api-atp-wta-itf.p.rapidapi.com"
 
@@ -49,78 +48,62 @@ if st.button("🚀 Analyzovat zápas"):
     else:
         headers = {
             "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": host,
-            "Content-Type": "application/json" # Důležité pro POST
+            "X-RapidAPI-Host": host
         }
         
-        # Parametry pro API (posíláme jako JSON body)
-        payload = {
+        # Parametry pro GET request
+        params = {
             "player1_id": p1_id,
             "player2_id": p2_id
         }
         
         with st.spinner("Stahuji historická data..."):
             try:
-                # ZMĚNA ZDE: Používáme POST místo GET a json=payload
-                response = requests.post(url, headers=headers, json=payload)
-                
-                # Pokud POST selže (404), zkusíme fallback na GET (pro jistotu)
-                if response.status_code == 404:
-                     response = requests.get(url, headers=headers, params=payload)
-
+                # ZMĚNA: Vráceno zpět na GET, který fungoval
+                response = requests.get(url, headers=headers, params=params)
                 data = response.json()
                 
-                # Pokud API vrátí chybu v JSONu
+                # Kontrola chyb API
                 if "message" in data:
                     st.error(f"Chyba API: {data['message']}")
                     st.stop()
 
-                # Zpracování dat
+                # Zpracování dat podle tvého JSONu
+                # Struktura je: {"data": [ { "player1": {...}, "player2": {...} } ] }
                 match_data = None
                 
-                # Pokud API vrátí seznam, hledáme v něm
-                raw_list = []
-                if 'data' in data:
-                    raw_list = data['data']
-                elif isinstance(data, list):
-                    raw_list = data
-                
-                # Projdeme seznam a najdeme naše dva hráče
-                for item in raw_list:
-                    # Získáme ID z dat (převedeme na string pro jistotu)
-                    id1_api = str(item.get('player1', {}).get('id'))
-                    id2_api = str(item.get('player2', {}).get('id'))
-                    
-                    # Kontrola, zda to jsou naši hráči (v jakémkoliv pořadí)
-                    if (id1_api == p1_id and id2_api == p2_id) or (id1_api == p2_id and id2_api == p1_id):
-                        match_data = item
-                        break
+                if 'data' in data and len(data['data']) > 0:
+                    # Bereme první záznam, který obvykle obsahuje souhrn
+                    match_data = data['data'][0]
                 
                 if not match_data:
                     st.warning("Nebyla nalezena žádná vzájemná historie pro tato ID.")
-                    st.write("Surová odpověď serveru:")
-                    st.json(data) 
+                    st.json(data)
                 else:
                     # ==========================================================
                     # 5. VÝPOČTY A PREDIKCE
                     # ==========================================================
-                    p1_name = match_data['player1']['name']
-                    p1_wins = match_data['player1']['wins']
-                    p1_country = match_data['player1'].get('countryAcr', '')
+                    # Načtení dat z JSONu
+                    p1_obj = match_data.get('player1', {})
+                    p2_obj = match_data.get('player2', {})
                     
-                    p2_name = match_data['player2']['name']
-                    p2_wins = match_data['player2']['wins']
-                    p2_country = match_data['player2'].get('countryAcr', '')
+                    p1_name = p1_obj.get('name', 'Hráč 1')
+                    p1_wins = int(p1_obj.get('wins', 0))
+                    p1_country = p1_obj.get('countryAcr', '')
+                    
+                    p2_name = p2_obj.get('name', 'Hráč 2')
+                    p2_wins = int(p2_obj.get('wins', 0))
+                    p2_country = p2_obj.get('countryAcr', '')
                     
                     total_matches = p1_wins + p2_wins
                     
+                    # Výpočet pravděpodobnosti
                     if total_matches > 0:
                         p1_prob = p1_wins / total_matches
                         p2_prob = p2_wins / total_matches
                         
-                        # Ošetření dělení nulou u kurzů
-                        p1_odd = round(1 / p1_prob, 2) if p1_prob > 0 else 99.0
-                        p2_odd = round(1 / p2_prob, 2) if p2_prob > 0 else 99.0
+                        p1_odd = round(1 / p1_prob, 2)
+                        p2_odd = round(1 / p2_prob, 2)
                     else:
                         p1_prob = 0.5
                         p2_prob = 0.5
