@@ -3,7 +3,10 @@ import requests
 import pandas as pd
 import json
 
-# ==============================================================================\n# 1. NASTAVENÍ STRÁNKY\n# ==============================================================================\nst.set_page_config(page_title="Tennis Pro Analyst", layout="wide", page_icon="🎾")
+# ==============================================================================
+# 1. NASTAVENÍ STRÁNKY
+# ==============================================================================
+st.set_page_config(page_title="Tennis Pro Analyst", layout="wide", page_icon="🎾")
 
 st.markdown("""
 <style>
@@ -16,13 +19,19 @@ st.markdown("""
 st.title("🎾 Tennis H2H Predictor")
 st.caption("Analýza vzájemných zápasů a výpočet férových kurzů.")
 
-# ==============================================================================\n# 2. NAČTENÍ KLÍČE\n# ==============================================================================\ntry:
+# ==============================================================================
+# 2. NAČTENÍ KLÍČE
+# ==============================================================================
+try:
     api_key = st.secrets["RAPIDAPI_KEY"]
     st.sidebar.success("✅ API Klíč aktivní")
 except:
     api_key = st.sidebar.text_input("Vlož X-RapidAPI-Key:", type="password")
 
-# ==============================================================================\n# 3. VSTUPY (ID HRÁČŮ)\n# ==============================================================================\nst.sidebar.header("Nastavení Zápasu")
+# ==============================================================================
+# 3. VSTUPY (ID HRÁČŮ)
+# ==============================================================================
+st.sidebar.header("Nastavení Zápasu")
 # Předvyplněno: Djokovič (5992) vs Nadal (677)
 p1_id = st.sidebar.text_input("ID Hráče 1:", value="5992")
 p2_id = st.sidebar.text_input("ID Hráče 2:", value="677")
@@ -31,7 +40,10 @@ p2_id = st.sidebar.text_input("ID Hráče 2:", value="677")
 url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/h2h"
 host = "tennis-api-atp-wta-itf.p.rapidapi.com"
 
-# ==============================================================================\n# 4. LOGIKA APLIKACE\n# ==============================================================================\nif st.button("🚀 Analyzovat zápas"):
+# ==============================================================================
+# 4. LOGIKA APLIKACE
+# ==============================================================================
+if st.button("🚀 Analyzovat zápas"):
     if not api_key:
         st.error("Chybí API klíč!")
     else:
@@ -52,7 +64,6 @@ host = "tennis-api-atp-wta-itf.p.rapidapi.com"
                 data = response.json()
                 
                 # Zpracování dat
-                # API vrací seznam 'data', musíme najít správný záznam
                 match_data = None
                 
                 # Pokud API vrátí seznam, hledáme v něm
@@ -64,7 +75,7 @@ host = "tennis-api-atp-wta-itf.p.rapidapi.com"
                 
                 # Projdeme seznam a najdeme naše dva hráče
                 for item in raw_list:
-                    # Získáme ID z dat (pozor, mohou být jako string nebo int)
+                    # Získáme ID z dat (převedeme na string pro jistotu)
                     id1_api = str(item.get('player1', {}).get('id'))
                     id2_api = str(item.get('player2', {}).get('id'))
                     
@@ -77,7 +88,10 @@ host = "tennis-api-atp-wta-itf.p.rapidapi.com"
                     st.warning("Nebyla nalezena žádná vzájemná historie pro tato ID.")
                     st.json(data) # Ukážeme co přišlo, pro kontrolu
                 else:
-                    # ==========================================================\n                    # 5. VÝPOČTY A PREDIKCE\n                    # ==========================================================\n                    p1_name = match_data['player1']['name']
+                    # ==========================================================
+                    # 5. VÝPOČTY A PREDIKCE
+                    # ==========================================================
+                    p1_name = match_data['player1']['name']
                     p1_wins = match_data['player1']['wins']
                     p1_country = match_data['player1'].get('countryAcr', '')
                     
@@ -91,15 +105,19 @@ host = "tennis-api-atp-wta-itf.p.rapidapi.com"
                         p1_prob = p1_wins / total_matches
                         p2_prob = p2_wins / total_matches
                         
-                        p1_odd = round(1 / p1_prob, 2)
-                        p2_odd = round(1 / p2_prob, 2)
+                        # Ošetření dělení nulou u kurzů
+                        p1_odd = round(1 / p1_prob, 2) if p1_prob > 0 else 99.0
+                        p2_odd = round(1 / p2_prob, 2) if p2_prob > 0 else 99.0
                     else:
                         p1_prob = 0.5
                         p2_prob = 0.5
                         p1_odd = 2.00
                         p2_odd = 2.00
 
-                    # ==========================================================\n                    # 6. VYKRESLENÍ UI\n                    # ==========================================================\n                    
+                    # ==========================================================
+                    # 6. VYKRESLENÍ UI
+                    # ==========================================================
+                    
                     # Hlavička zápasu
                     c1, c2, c3 = st.columns([2, 1, 2])
                     with c1:
