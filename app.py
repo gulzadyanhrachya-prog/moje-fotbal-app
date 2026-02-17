@@ -36,7 +36,7 @@ st.sidebar.header("Nastavení Zápasu")
 p1_id = st.sidebar.text_input("ID Hráče 1:", value="5992")
 p2_id = st.sidebar.text_input("ID Hráče 2:", value="677")
 
-# URL Endpointu (H2H)
+# URL Endpointu (H2H) - Zde je ta změna, ujistíme se, že je to správná URL
 url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/h2h"
 host = "tennis-api-atp-wta-itf.p.rapidapi.com"
 
@@ -49,20 +49,32 @@ if st.button("🚀 Analyzovat zápas"):
     else:
         headers = {
             "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": host
+            "X-RapidAPI-Host": host,
+            "Content-Type": "application/json" # Důležité pro POST
         }
         
-        # Parametry pro API
-        params = {
+        # Parametry pro API (posíláme jako JSON body)
+        payload = {
             "player1_id": p1_id,
             "player2_id": p2_id
         }
         
         with st.spinner("Stahuji historická data..."):
             try:
-                response = requests.get(url, headers=headers, params=params)
+                # ZMĚNA ZDE: Používáme POST místo GET a json=payload
+                response = requests.post(url, headers=headers, json=payload)
+                
+                # Pokud POST selže (404), zkusíme fallback na GET (pro jistotu)
+                if response.status_code == 404:
+                     response = requests.get(url, headers=headers, params=payload)
+
                 data = response.json()
                 
+                # Pokud API vrátí chybu v JSONu
+                if "message" in data:
+                    st.error(f"Chyba API: {data['message']}")
+                    st.stop()
+
                 # Zpracování dat
                 match_data = None
                 
@@ -86,7 +98,8 @@ if st.button("🚀 Analyzovat zápas"):
                 
                 if not match_data:
                     st.warning("Nebyla nalezena žádná vzájemná historie pro tato ID.")
-                    st.json(data) # Ukážeme co přišlo, pro kontrolu
+                    st.write("Surová odpověď serveru:")
+                    st.json(data) 
                 else:
                     # ==========================================================
                     # 5. VÝPOČTY A PREDIKCE
