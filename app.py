@@ -3,33 +3,42 @@ import requests
 import pandas as pd
 import json
 
-st.set_page_config(page_title="Match Finder", layout="wide")
-st.title("⚽ Hledání zápasů (Premier League)")
+st.set_page_config(page_title="Tennis Matchstat Explorer", layout="wide", page_icon="🎾")
+st.title("🎾 Tennis API Explorer (Matchstat)")
+st.caption("Průzkumník pro ATP/WTA/ITF data. Potřebujeme zjistit strukturu pro predikce.")
 
-# 1. Načtení klíče
+# 1. NAČTENÍ KLÍČE
 try:
     api_key = st.secrets["RAPIDAPI_KEY"]
     st.sidebar.success("✅ API Klíč načten")
 except:
     api_key = st.sidebar.text_input("Vlož X-RapidAPI-Key:", type="password")
 
-# 2. Nastavení Endpointu
+# 2. NASTAVENÍ ENDPOINTU
 st.sidebar.header("Nastavení")
-st.info("Jdi na RapidAPI -> Matches by League -> Zkopíruj URL")
+st.sidebar.info("Jdi na RapidAPI -> Code Snippets -> Python Requests")
 
-# Zde vlož tu NOVOU URL, kterou najdeš (ne tu pro ligy!)
-url = st.sidebar.text_input("URL Endpointu (Matches):", value="https://api-fotmob.p.rapidapi.com/leagues") 
-host = st.sidebar.text_input("X-RapidAPI-Host:", value="api-fotmob.p.rapidapi.com")
+# Předvyplněné hodnoty pro Matchstat API
+default_host = "tennis-api-atp-wta-itf.p.rapidapi.com"
+# Zkusíme endpoint pro H2H (Head to Head), to je pro predikce nejdůležitější
+default_url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/h2h"
 
-# 3. Parametry (Nastaveno pro Premier League)
-# Zkoušíme sezónu 2025/2026. Pokud to nepůjde, zkusíme 2024/2025.
-season_option = st.sidebar.selectbox("Vyber sezónu:", ["2025/2026", "2024/2025", "2023/2024"])
-params = {
-    "id": "47",  # ID pro Premier League ve FotMobu
-    "season": season_option
-}
+url = st.sidebar.text_input("URL Endpointu:", value=default_url)
+host = st.sidebar.text_input("X-RapidAPI-Host:", value=default_host)
 
-if st.button("📡 Stáhnout zápasy"):
+# 3. PARAMETRY (Hledání hráčů)
+st.sidebar.subheader("Parametry")
+st.sidebar.caption("Pro H2H obvykle potřebujeme ID hráčů. Zkusme nejdřív zjistit, jestli API umí hledat podle jména, nebo jestli musíme zadat ID.")
+
+# Univerzální vstup pro parametry
+params_str = st.sidebar.text_area(
+    "Parametry (JSON):", 
+    value='{"player1_id": "ranking", "player2_id": "ranking"}' 
+    # Poznámka: Některá API berou "ranking" jako zástupný znak pro top hráče, 
+    # nebo budeme muset najít endpoint "Search Player".
+)
+
+if st.button("📡 Stáhnout data"):
     if not api_key or not url:
         st.error("Chybí Klíč nebo URL!")
     else:
@@ -38,32 +47,27 @@ if st.button("📡 Stáhnout zápasy"):
             "X-RapidAPI-Host": host
         }
         
-        with st.spinner(f"Stahuji zápasy pro sezónu {season_option}..."):
-            try:
+        try:
+            # Převod textu na JSON parametry
+            params = json.loads(params_str)
+            
+            with st.spinner("Stahuji tenisová data..."):
                 response = requests.get(url, headers=headers, params=params)
                 data = response.json()
                 
-                # Zobrazení JSONu
-                st.subheader("🔍 Výsledek")
+                # 1. Zobrazení JSONu (To nejdůležitější)
+                st.subheader("🔍 Struktura dat")
+                st.write("Hledej: 'player_id', 'winner', 'surface', 'score'")
                 st.json(data)
                 
-                # Hledání zápasů v datech
-                # FotMob vrací zápasy často v: matches -> allMatches
-                matches = []
-                if 'matches' in data and 'allMatches' in data['matches']:
-                    matches = data['matches']['allMatches']
-                elif 'matches' in data:
-                    matches = data['matches']
-                elif 'response' in data and 'matches' in data['response']:
-                    matches = data['response']['matches']
-                
-                if matches:
-                    st.success(f"Našel jsem {len(matches)} zápasů!")
-                    # Ukázka prvního zápasu pro kontrolu struktury
-                    st.write("Příklad prvního zápasu:")
-                    st.write(matches[0])
-                else:
-                    st.warning("Data stažena, ale seznam zápasů je prázdný. Zkus změnit sezónu.")
+                # 2. Pokus o tabulku (pokud je to seznam)
+                if isinstance(data, list):
+                    st.dataframe(pd.DataFrame(data))
+                elif 'results' in data:
+                    st.dataframe(pd.DataFrame(data['results']))
+                elif 'response' in data:
+                    st.dataframe(pd.DataFrame(data['response']))
 
-            except Exception as e:
-                st.error(f"Chyba: {e}")
+        except Exception as e:
+            st.error(f"Chyba: {e}")
+            st.warning("Zkontroluj, jestli máš správně formát JSON v parametrech (uvozovky, závorky).")
