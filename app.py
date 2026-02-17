@@ -3,8 +3,8 @@ import requests
 import pandas as pd
 import json
 
-st.set_page_config(page_title="FotMob Data Explorer", layout="wide")
-st.title("⚽ FotMob Match Data Viewer")
+st.set_page_config(page_title="Match Finder", layout="wide")
+st.title("⚽ Hledání zápasů (Premier League)")
 
 # 1. Načtení klíče
 try:
@@ -13,18 +13,21 @@ try:
 except:
     api_key = st.sidebar.text_input("Vlož X-RapidAPI-Key:", type="password")
 
-# 2. Nastavení Endpointu (Hledáme zápasy)
+# 2. Nastavení Endpointu
 st.sidebar.header("Nastavení")
+st.info("Jdi na RapidAPI -> Matches by League -> Zkopíruj URL")
 
-# Zde vlož URL z RapidAPI sekce 'Matches' nebo 'League Matches'
-# Příklad pro FotMob API: https://.../leagues or https://.../matches
-url = st.sidebar.text_input("URL Endpointu (Matches/League):")
-host = st.sidebar.text_input("X-RapidAPI-Host:")
+# Zde vlož tu NOVOU URL, kterou najdeš (ne tu pro ligy!)
+url = st.sidebar.text_input("URL Endpointu (Matches):", value="https://api-fotmob.p.rapidapi.com/leagues") 
+host = st.sidebar.text_input("X-RapidAPI-Host:", value="api-fotmob.p.rapidapi.com")
 
-# 3. Parametry pro FotMob
-# FotMob většinou vyžaduje ID ligy (47 = Premier League) a sezónu
-st.sidebar.info("Zkusíme stáhnout zápasy pro Premier League (ID 47)")
-params_str = st.sidebar.text_input("Parametry (JSON):", value='{"id": "47", "season": "2023/2024"}')
+# 3. Parametry (Nastaveno pro Premier League)
+# Zkoušíme sezónu 2025/2026. Pokud to nepůjde, zkusíme 2024/2025.
+season_option = st.sidebar.selectbox("Vyber sezónu:", ["2025/2026", "2024/2025", "2023/2024"])
+params = {
+    "id": "47",  # ID pro Premier League ve FotMobu
+    "season": season_option
+}
 
 if st.button("📡 Stáhnout zápasy"):
     if not api_key or not url:
@@ -35,35 +38,32 @@ if st.button("📡 Stáhnout zápasy"):
             "X-RapidAPI-Host": host
         }
         
-        try:
-            params = json.loads(params_str)
-            with st.spinner("Stahuji zápasy..."):
+        with st.spinner(f"Stahuji zápasy pro sezónu {season_option}..."):
+            try:
                 response = requests.get(url, headers=headers, params=params)
                 data = response.json()
                 
-                # 1. Zobrazení JSONu (Tohle je klíčové!)
-                st.subheader("🔍 Struktura dat")
-                st.write("Hledej slova jako 'matches', 'fixtures', 'results', 'home', 'away'.")
+                # Zobrazení JSONu
+                st.subheader("🔍 Výsledek")
                 st.json(data)
                 
-                # 2. Pokus o nalezení zápasů v datech
-                # FotMob má často strukturu: response -> matches -> allMatches
-                found_matches = []
-                
-                # Univerzální hledač seznamů
-                if 'matches' in data:
-                    found_matches = data['matches']
+                # Hledání zápasů v datech
+                # FotMob vrací zápasy často v: matches -> allMatches
+                matches = []
+                if 'matches' in data and 'allMatches' in data['matches']:
+                    matches = data['matches']['allMatches']
+                elif 'matches' in data:
+                    matches = data['matches']
                 elif 'response' in data and 'matches' in data['response']:
-                    found_matches = data['response']['matches']
-                elif 'allMatches' in data:
-                    found_matches = data['allMatches']
+                    matches = data['response']['matches']
                 
-                if found_matches:
-                    st.success(f"Nalezeno {len(found_matches)} zápasů!")
-                    # Ukázka prvního zápasu
-                    st.info(f"První zápas v datech: {found_matches[0]}")
+                if matches:
+                    st.success(f"Našel jsem {len(matches)} zápasů!")
+                    # Ukázka prvního zápasu pro kontrolu struktury
+                    st.write("Příklad prvního zápasu:")
+                    st.write(matches[0])
                 else:
-                    st.warning("Data stažena, ale nenašel jsem seznam zápasů. Podívej se do JSONu výše.")
+                    st.warning("Data stažena, ale seznam zápasů je prázdný. Zkus změnit sezónu.")
 
-        except Exception as e:
-            st.error(f"Chyba: {e}")
+            except Exception as e:
+                st.error(f"Chyba: {e}")
