@@ -3,9 +3,8 @@ import requests
 import pandas as pd
 import json
 
-st.set_page_config(page_title="Tennis Player Search", layout="wide", page_icon="🎾")
-st.title("🎾 Hledání ID Tenistů")
-st.caption("Krok 1: Musíme najít ID hráčů, abychom mohli predikovat jejich zápasy.")
+st.set_page_config(page_title="Tennis H2H Explorer", layout="wide", page_icon="🎾")
+st.title("🎾 Tennis H2H (Vzájemné zápasy)")
 
 # 1. NAČTENÍ KLÍČE
 try:
@@ -14,52 +13,64 @@ try:
 except:
     api_key = st.sidebar.text_input("Vlož X-RapidAPI-Key:", type="password")
 
-# 2. NASTAVENÍ ENDPOINTU (Hledáme hráče)
+# 2. NASTAVENÍ ENDPOINTU
 st.sidebar.header("Nastavení")
-st.info("Jdi na RapidAPI -> Hledej endpoint 'Search Player' nebo 'Rankings'")
+st.info("Jdi na RapidAPI -> Hledej endpoint 'H2H' nebo 'Head to Head'")
 
-# Zde vlož URL pro vyhledávání hráčů
-# Tip: U Matchstat API to bývá často POST request na '/player/search'
-url = st.sidebar.text_input("URL Endpointu (Search/Rankings):", value="https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/player/search")
-host = st.sidebar.text_input("X-RapidAPI-Host:", value="tennis-api-atp-wta-itf.p.rapidapi.com")
+# Předvyplněné hodnoty pro Matchstat API (nejčastější varianta)
+default_url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/h2h"
+default_host = "tennis-api-atp-wta-itf.p.rapidapi.com"
 
-# 3. VYHLEDÁVÁNÍ
-search_query = st.text_input("Zadej jméno hráče (např. Djokovic):", value="Djokovic")
+url = st.sidebar.text_input("URL Endpointu (H2H):", value=default_url)
+host = st.sidebar.text_input("X-RapidAPI-Host:", value=default_host)
 
-if st.button("🔍 Najít hráče"):
+# 3. ZADÁNÍ HRÁČŮ
+st.subheader("Vyber dva hráče (podle ID)")
+st.caption("ID získáš z předchozího kroku (Search Player).")
+
+col1, col2 = st.columns(2)
+with col1:
+    p1_id = st.text_input("ID Hráče 1:", value="356") # 356 bývá často Djokovic v Matchstat API
+with col2:
+    p2_id = st.text_input("ID Hráče 2:", value="258") # 258 bývá často Nadal
+
+if st.button("📡 Stáhnout vzájemné zápasy"):
     if not api_key or not url:
         st.error("Chybí Klíč nebo URL!")
     else:
         headers = {
             "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": host,
-            "Content-Type": "application/json"
+            "X-RapidAPI-Host": host
         }
         
-        # Matchstat API obvykle vyžaduje POST request s parametrem 'query'
-        payload = {"query": search_query}
+        # Parametry pro H2H
+        params = {
+            "player1_id": p1_id,
+            "player2_id": p2_id
+        }
         
-        with st.spinner(f"Hledám hráče '{search_query}'..."):
+        with st.spinner("Stahuji historii zápasů..."):
             try:
-                # Zkusíme POST (nejčastější pro search)
-                response = requests.post(url, headers=headers, json=payload)
-                
-                # Pokud POST nefunguje (vrátí chybu), zkusíme GET
-                if response.status_code != 200:
-                    st.warning("POST nefungoval, zkouším GET...")
-                    response = requests.get(url, headers=headers, params={"q": search_query})
-
+                response = requests.get(url, headers=headers, params=params)
                 data = response.json()
                 
-                # Zobrazení výsledků
-                st.subheader("Výsledky hledání:")
+                # 1. Zobrazení JSONu (Tohle potřebuji vidět!)
+                st.subheader("🔍 Struktura dat")
+                st.write("Hledej slova jako 'winner', 'surface', 'score', 'stats'.")
                 st.json(data)
                 
-                # Pokus o tabulku
-                if isinstance(data, list):
-                    st.dataframe(pd.DataFrame(data))
-                elif 'data' in data:
-                    st.dataframe(pd.DataFrame(data['data']))
+                # 2. Pokus o výpis zápasů
+                # Matchstat vrací data často v klíči 'h2h' nebo přímo seznam
+                matches = []
+                if 'h2h' in data:
+                    matches = data['h2h']
+                elif isinstance(data, list):
+                    matches = data
                 
+                if matches:
+                    st.success(f"Nalezeno {len(matches)} vzájemných zápasů.")
+                else:
+                    st.warning("Žádné zápasy nenalezeny nebo jiná struktura dat.")
+
             except Exception as e:
                 st.error(f"Chyba: {e}")
