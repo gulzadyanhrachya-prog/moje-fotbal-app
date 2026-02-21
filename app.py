@@ -247,4 +247,3 @@ with tab2:
                 st.dataframe(h2h[['tourney_date', 'winner_name', 'score', 'surface']], hide_index=True)
             else:
                 st.info("Žádné vzájemné zápasy.")
-Tohle je už velmi pokročilý nástroj. Kombinuje živá data s historickou analýzou. Dej vědět, jak to šlape!
