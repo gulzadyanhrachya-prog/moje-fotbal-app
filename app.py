@@ -3,11 +3,9 @@ import pandas as pd
 import numpy as np
 import requests
 from datetime import datetime
-from thefuzz import process # Knihovna pro párování jmen (např. "Djokovic" vs "N. Djokovic")
+from thefuzz import process
 
-# ==============================================================================
-# 1. KONFIGURACE A STYLY
-# ==============================================================================
+# ==============================================================================\n# 1. KONFIGURACE A STYLY\n# ==============================================================================\n
 st.set_page_config(page_title="Tennis Betting AI 2026", layout="wide", page_icon="🎾")
 
 st.markdown("""
@@ -20,16 +18,14 @@ st.markdown("""
 
 st.title("🎾 Tennis AI: Live Matches & Predictions (2026 Ready)")
 
-# ==============================================================================
-# 2. NAČTENÍ HISTORICKÝCH DAT (MOZEK)
-# ==============================================================================
+# ==============================================================================\n# 2. NAČTENÍ HISTORICKÝCH DAT (MOZEK)\n# ==============================================================================\n
 @st.cache_data(ttl=3600)
 def load_historical_data():
     # Stahujeme data ATP a WTA z open-source databáze Jeffa Sackmanna
     base_atp = "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_matches_{}.csv"
     base_wta = "https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_matches_{}.csv"
     
-    # PŘIDÁN ROK 2026
+    # Data včetně roku 2026
     years = [2024, 2025, 2026] 
     data_frames = []
     
@@ -48,7 +44,6 @@ def load_historical_data():
             df_wta['tour'] = 'WTA'
             data_frames.append(df_wta)
         except:
-            # Pokud rok 2026 ještě neexistuje nebo je soubor nedostupný, přeskočíme ho
             pass
             
     status_text.empty()
@@ -64,17 +59,14 @@ df_history = load_historical_data()
 
 # Seznam všech hráčů v databázi pro vyhledávání
 if not df_history.empty:
-    # Spojíme vítěze a poražené, abychom měli kompletní seznam jmen
     db_players = pd.concat([df_history['winner_name'], df_history['loser_name']]).unique()
     db_players = [str(p) for p in db_players if isinstance(p, str)]
 else:
     db_players = []
 
-# ==============================================================================
-# 3. FUNKCE PRO API (ROZVRH) - ZDE BYLA CHYBA V ODSAZENÍ
-# ==============================================================================
+# ==============================================================================\n# 3. FUNKCE PRO API (ROZVRH)\n# ==============================================================================\n
 def get_todays_matches(api_key, date_str):
-    # Použijeme Tennis Live Data API (nebo podobné z RapidAPI)
+    # Použijeme Tennis Live Data API
     url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/matches/date"
     host = "tennis-api-atp-wta-itf.p.rapidapi.com"
     
@@ -86,23 +78,17 @@ def get_todays_matches(api_key, date_str):
     
     try:
         response = requests.get(url, headers=headers, params=params)
-        # TOTO BYLO ŠPATNĚ ODSAZENÉ - TEĎ JE TO SPRÁVNĚ UVNITŘ FUNKCE
         return response.json()
     except:
         return None
 
-# ==============================================================================
-# 4. POMOCNÉ FUNKCE (PREDIKCE & PÁROVÁNÍ)
-# ==============================================================================
+# ==============================================================================\n# 4. POMOCNÉ FUNKCE (PREDIKCE & PÁROVÁNÍ)\n# ==============================================================================\n
 def find_player_in_db(api_name):
     # Zkusí najít jméno z API v naší databázi (Fuzzy matching)
-    # Např. API: "C. Alcaraz" -> DB: "Carlos Alcaraz"
     if not api_name or not db_players: return None
     
-    # Hledáme nejlepší shodu
     match = process.extractOne(api_name, db_players)
     
-    # Pokud je shoda vyšší než 85%, považujeme to za stejného hráče
     if match and match[1] > 85: 
         return match[0]
     return None
@@ -115,23 +101,18 @@ def calculate_win_prob(player, surface):
     losses = df_history[df_history['loser_name'] == player]
     
     total = len(wins) + len(losses)
-    if total < 5: return 0.5 # Málo dat = 50/50 (neznámý hráč)
+    if total < 5: return 0.5 
     
-    # Filtrujeme povrch (Hard, Clay, Grass)
     wins_surf = wins[wins['surface'] == surface]
     losses_surf = losses[losses['surface'] == surface]
     surf_total = len(wins_surf) + len(losses_surf)
     
     wr_total = len(wins) / total
-    # Pokud na povrchu nehrál, použijeme celkový průměr
     wr_surf = len(wins_surf) / surf_total if surf_total > 0 else wr_total
     
-    # Vážený průměr (70% váha na povrch, 30% celková forma)
     return (wr_surf * 0.7) + (wr_total * 0.3)
 
-# ==============================================================================
-# 5. UI APLIKACE
-# ==============================================================================
+# ==============================================================================\n# 5. UI APLIKACE\n# ==============================================================================\n
 
 # Sidebar - API Klíč
 try:
@@ -143,7 +124,8 @@ except:
 # Záložky
 tab1, tab2 = st.tabs(["📅 Dnešní Zápasy & Tipy", "🔍 Manuální Analýza"])
 
-# --- TAB 1: LIVE ZÁPASY ---\nwith tab1:
+# --- TAB 1: LIVE ZÁPASY ---
+with tab1:
     st.header("Dnešní nabídka zápasů")
     st.caption("Stáhne program z RapidAPI a porovná ho s databází (2024-2026).")
     
@@ -159,7 +141,6 @@ tab1, tab2 = st.tabs(["📅 Dnešní Zápasy & Tipy", "🔍 Manuální Analýza"
                 
                 matches_found = []
                 
-                # Logika pro parsování JSONu
                 raw_matches = []
                 if api_data and 'data' in api_data:
                     raw_matches = api_data['data']
@@ -170,36 +151,29 @@ tab1, tab2 = st.tabs(["📅 Dnešní Zápasy & Tipy", "🔍 Manuální Analýza"
                 
                 if not raw_matches:
                     st.warning("Žádné zápasy nenalezeny nebo chyba API.")
-                    if api_data: st.json(api_data) # Debug
+                    if api_data: st.json(api_data)
                 else:
-                    # Projdeme zápasy a zkusíme predikovat
                     for m in raw_matches:
                         try:
-                            # Získání jmen z API (struktura se může lišit)
                             p1_api = m.get('player1', {}).get('name') or m.get('home_player')
                             p2_api = m.get('player2', {}).get('name') or m.get('away_player')
                             tournament = m.get('tournament', {}).get('name', 'Unknown')
                             
-                            # Získání povrchu
-                            surface_api = m.get('tournament', {}).get('surface', 'Hard') # Default Hard
+                            surface_api = m.get('tournament', {}).get('surface', 'Hard')
                             
-                            # Normalizace povrchu pro naši DB (Jeff Sackmann používá Hard, Clay, Grass)
                             surface_db = "Hard"
                             if surface_api and "Clay" in surface_api: surface_db = "Clay"
                             elif surface_api and "Grass" in surface_api: surface_db = "Grass"
                             elif surface_api and "Carpet" in surface_api: surface_db = "Carpet"
                             
                             if p1_api and p2_api:
-                                # Najdeme hráče v naší DB
                                 p1_db = find_player_in_db(p1_api)
                                 p2_db = find_player_in_db(p2_api)
                                 
                                 if p1_db and p2_db:
-                                    # Máme data! Počítáme
                                     prob1 = calculate_win_prob(p1_db, surface_db)
                                     prob2 = calculate_win_prob(p2_db, surface_db)
                                     
-                                    # Normalizace na 100%
                                     total_prob = prob1 + prob2
                                     if total_prob > 0:
                                         final_p1 = prob1 / total_prob
@@ -215,21 +189,19 @@ tab1, tab2 = st.tabs(["📅 Dnešní Zápasy & Tipy", "🔍 Manuální Analýza"
                                     })
                         except: continue
 
-                    # VYKRESLENÍ TIPŮ
                     if matches_found:
                         st.success(f"Analyzováno {len(matches_found)} zápasů s historií v DB.")
                         
-                        # Seřadíme podle "jistoty" (největší rozdíl v pravděpodobnosti)
                         matches_found.sort(key=lambda x: abs(x['prob1'] - 0.5), reverse=True)
                         
                         st.subheader("🔥 TOP TIPY DNE")
-                        for match in matches_found[:5]: # Top 5 tipů
+                        for match in matches_found[:5]:
                             p1 = match['p1']
                             p2 = match['p2']
                             prob = match['prob1'] if match['prob1'] > 0.5 else match['prob2']
                             winner = p1 if match['prob1'] > 0.5 else p2
                             
-                            if prob > 0.60: # Zobrazujeme jen silné tipy
+                            if prob > 0.60:
                                 st.markdown(f"""
                                 <div class="tip-card">
                                     <h4>🏆 {winner}</h4>
@@ -252,7 +224,7 @@ tab1, tab2 = st.tabs(["📅 Dnešní Zápasy & Tipy", "🔍 Manuální Analýza"
                             st.markdown("---")
                             
                     else:
-                        st.info("Zápasy staženy, ale nenašel jsem hráče v historické databázi (možná hrají junioři nebo je jiné jméno).")
+                        st.info("Zápasy staženy, ale nenašel jsem hráče v historické databázi.")
                         if raw_matches:
                             with st.expander("Zobrazit surová data z API"):
                                 st.json(raw_matches)
@@ -264,9 +236,7 @@ with tab2:
     col_s, col_p1, col_p2 = st.columns(3)
     surface_man = col_s.selectbox("Povrch:", ["Hard", "Clay", "Grass"])
     
-    # Výběr hráčů z DB
     if not df_history.empty:
-        # Zkusíme najít indexy pro defaultní hráče
         idx1 = 0
         idx2 = 1
         if "Novak Djokovic" in db_players: idx1 = db_players.index("Novak Djokovic")
@@ -279,14 +249,12 @@ with tab2:
             prob1 = calculate_win_prob(p1_man, surface_man)
             prob2 = calculate_win_prob(p2_man, surface_man)
             
-            # Normalizace
             total = prob1 + prob2
             final1 = prob1 / total
             
             st.metric(f"Šance {p1_man}", f"{int(final1*100)}%")
             st.metric(f"Šance {p2_man}", f"{int((1-final1)*100)}%")
             
-            # H2H Historie
             st.subheader("Vzájemné zápasy v DB")
             h2h = df_history[((df_history['winner_name'] == p1_man) & (df_history['loser_name'] == p2_man)) | 
                              ((df_history['winner_name'] == p2_man) & (df_history['loser_name'] == p1_man))]
