@@ -3,31 +3,30 @@ import pandas as pd
 import numpy as np
 import requests
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from thefuzz import process
 
-# ==============================================================================\
+# ==============================================================================
 # 1. KONFIGURACE A STYLY
-# ==============================================================================\
-st.set_page_config(page_title="Tennis AI Betting v6.0", layout="wide", page_icon="🎾")
+# ==============================================================================
+st.set_page_config(page_title="Tennis Betting AI v7.0", layout="wide", page_icon="🎾")
 
 st.markdown("""
 <style>
     .tip-card { background-color: #d4edda; padding: 15px; border-radius: 10px; border-left: 5px solid #28a745; margin-bottom: 10px; }
-    .match-card { background-color: #ffffff; padding: 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #e0e0e0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .tour-header { font-size: 14px; color: #666; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; }
-    .player-name { font-size: 18px; font-weight: bold; }
-    .vs { color: #999; font-size: 14px; margin: 0 10px; }
-    .prediction-box { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+    .market-box { background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 5px; border: 1px solid #eee; font-size: 0.9em; }
+    .high-conf { color: #28a745; font-weight: bold; }
+    .risk-conf { color: #dc3545; font-weight: bold; }
+    .section-title { font-size: 1.2em; font-weight: bold; margin-top: 10px; margin-bottom: 5px; color: #333; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎾 Tennis AI: Scraper & Predictor")
-st.caption("Automaticky stahuje program z TennisExplorer, čistí data a počítá predikce.")
+st.title("🎾 Tennis AI: Advanced Markets & Predictions")
+st.caption("Analýza 18 sázkových trhů | Data: Jeff Sackmann (2024-2026) | Scraper: TennisExplorer")
 
-# ==============================================================================\
+# ==============================================================================
 # 2. NAČTENÍ HISTORICKÝCH DAT (MOZEK)
-# ==============================================================================\
+# ==============================================================================
 @st.cache_data(ttl=3600)
 def load_historical_data():
     base_atp = "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_matches_{}.csv"
@@ -37,7 +36,7 @@ def load_historical_data():
     data_frames = []
     
     status_text = st.empty()
-    status_text.text("⏳ Načítám databázi hráčů...")
+    status_text.text("⏳ Načítám databázi hráčů a statistik...")
     
     for year in years:
         try:
@@ -56,6 +55,13 @@ def load_historical_data():
     
     full_df = pd.concat(data_frames, ignore_index=True)
     full_df['tourney_date'] = pd.to_datetime(full_df['tourney_date'], format='%Y%m%d', errors='coerce')
+    
+    # Převedení statistik servisu na čísla (pro analýzu holdů)
+    cols_to_numeric = ['w_SvGms', 'w_bpSaved', 'w_bpFaced', 'l_SvGms', 'l_bpSaved', 'l_bpFaced']
+    for col in cols_to_numeric:
+        if col in full_df.columns:
+            full_df[col] = pd.to_numeric(full_df[col], errors='coerce').fillna(0)
+            
     return full_df
 
 df_history = load_historical_data()
@@ -63,255 +69,408 @@ df_history = load_historical_data()
 if not df_history.empty:
     db_players = pd.concat([df_history['winner_name'], df_history['loser_name']]).unique()
     db_players = [str(p) for p in db_players if isinstance(p, str)]
+    db_players.sort()
 else:
     db_players = []
 
-# ==============================================================================\
-# 3. CHYTRÝ PARSER (ČISTIČKA DAT Z WEBU)
-# ==============================================================================\
-def clean_player_name(name):
-    # Odstraní nasazení v závorce, např. "Alcaraz C. (1)" -> "Alcaraz C."
-    name = re.sub(r'\(\d+\)', '', name).strip()
-    # Odstraní "ret." nebo "w.o."
-    name = name.replace("ret.", "").replace("w.o.", "").strip()
-    return name
-
-def parse_tennis_explorer(df):
-    """
-    Tato funkce vezme tu 'rozsypanou' tabulku a udělá z ní seznam zápasů.
-    """
-    matches = []
-    current_tournament = "Unknown Tournament"
+# ==============================================================================
+# 3. POKROČILÝ STATISTICKÝ ENGINE
+# ==============================================================================
+def parse_score(score_str):
+    """Rozparsuje skóre (např. '6-4 7-6(5)') na sety a gamy."""
+    if not isinstance(score_str, str) or 'RET' in score_str or 'W/O' in score_str:
+        return None
     
-    # Procházíme tabulku řádek po řádku
-    # Hledáme dvojice hráčů
-    pending_player = None
-    pending_time = None
+    sets = score_str.split(' ')
+    parsed_sets = []
     
-    # Převedeme na stringy a zahodíme prázdné
-    df = df.astype(str)
-    
-    for index, row in df.iterrows():
-        # Sloupec 0 obvykle obsahuje Čas nebo je prázdný u turnaje
-        # Sloupec 1 obvykle obsahuje Jméno hráče nebo Název turnaje
-        
-        col0 = str(row[0]).strip()
-        col1 = str(row[1]).strip()
-        
-        # 1. DETEKCE TURNAJE
-        # Pokud řádek obsahuje "H2H" nebo "S" (Set), je to hlavička turnaje
-        if "H2H" in row.values or "S" in str(row.values):
-            # Název turnaje bývá v prvním nebo druhém sloupci
-            possible_name = col0 if len(col0) > 3 else col1
-            if possible_name and "H2H" not in possible_name:
-                current_tournament = possible_name
-            pending_player = None # Reset
-            continue
+    for s in sets:
+        # Odstranění tiebreak čísel v závorce
+        s_clean = re.sub(r'\(\d+\)', '', s)
+        if '-' in s_clean:
+            try:
+                w, l = map(int, s_clean.split('-'))
+                parsed_sets.append((w, l))
+            except: pass
             
-        # 2. DETEKCE ZÁPASU (Hledáme čas ve formátu HH:MM nebo slovo Live)
-        is_match_row = False
-        if ":" in col0 and len(col0) <= 5: is_match_row = True
-        if "Live" in col0: is_match_row = True
-        
-        if is_match_row:
-            # Jméno hráče je obvykle ve sloupci 1
-            raw_name = col1
-            
-            # Pokud je jméno příliš krátké nebo je to skóre, ignorujeme
-            if len(raw_name) < 3 or raw_name.replace('.','').isdigit():
-                continue
-                
-            clean_name = clean_player_name(raw_name)
-            
-            if pending_player is None:
-                # Našli jsme prvního hráče z dvojice
-                pending_player = clean_name
-                pending_time = col0
-            else:
-                # Našli jsme druhého hráče -> MÁME ZÁPAS!
-                matches.append({
-                    "tournament": current_tournament,
-                    "time": pending_time,
-                    "p1": pending_player,
-                    "p2": clean_name
-                })
-                pending_player = None # Reset pro další dvojici
-                
-    return matches
+    return parsed_sets
 
-# ==============================================================================\
-# 4. PREDIKČNÍ LOGIKA
-# ==============================================================================\
-def find_player_in_db(scraped_name):
-    # TennisExplorer: "Alcaraz C." -> DB: "Carlos Alcaraz"
-    if not scraped_name or not db_players: return None
+def get_advanced_stats(player, surface):
+    """Vypočítá detailní statistiky hráče pro všechny trhy."""
+    if df_history.empty: return None
     
-    # Zkusíme prohodit jméno a příjmení pro lepší shodu
-    # "Alcaraz C." -> "C. Alcaraz"
-    parts = scraped_name.split()
-    if len(parts) > 1:
-        reversed_name = f"{parts[-1]} {parts[0]}" # C. Alcaraz
-    else:
-        reversed_name = scraped_name
-        
-    # Hledáme nejlepší shodu pro obě varianty
-    match1 = process.extractOne(scraped_name, db_players)
-    match2 = process.extractOne(reversed_name, db_players)
-    
-    best_match = match1 if match1[1] >= match2[1] else match2
-    
-    if best_match and best_match[1] > 80: # 80% shoda stačí
-        return best_match[0]
-    return None
-
-def calculate_win_prob(player, surface):
-    if df_history.empty: return 0.5
-    
+    # Filtrujeme zápasy
     wins = df_history[df_history['winner_name'] == player]
     losses = df_history[df_history['loser_name'] == player]
     
-    total = len(wins) + len(losses)
-    if total < 5: return 0.5 
-    
+    # Filtrujeme povrch (pokud je málo dat, bereme vše)
     wins_surf = wins[wins['surface'] == surface]
     losses_surf = losses[losses['surface'] == surface]
-    surf_total = len(wins_surf) + len(losses_surf)
     
-    wr_total = len(wins) / total
-    wr_surf = len(wins_surf) / surf_total if surf_total > 0 else wr_total
+    if len(wins_surf) + len(losses_surf) < 5:
+        # Fallback na všechny povrchy
+        all_wins = wins
+        all_losses = losses
+    else:
+        all_wins = wins_surf
+        all_losses = losses_surf
+        
+    total_matches = len(all_wins) + len(all_losses)
+    if total_matches == 0: return None
     
-    return (wr_surf * 0.7) + (wr_total * 0.3)
+    stats = {
+        "matches": total_matches,
+        "win_rate": len(all_wins) / total_matches,
+        "first_set_win_rate": 0,
+        "tiebreak_rate": 0,
+        "bagel_rate": 0, # 6-0
+        "avg_games_won": 0,
+        "avg_games_lost": 0,
+        "hold_serve_rate": 0.75, # Default ATP průměr
+        "break_serve_rate": 0.20 # Default ATP průměr
+    }
+    
+    # Analýza skóre
+    first_set_wins = 0
+    tiebreaks = 0
+    bagels = 0
+    total_games_won = 0
+    total_games_lost = 0
+    
+    # Procházíme výhry
+    for _, row in all_wins.iterrows():
+        sets = parse_score(row['score'])
+        if not sets: continue
+        
+        # 1. set
+        if sets[0][0] > sets[0][1]: first_set_wins += 1
+        
+        # Gamy a Tiebreaky
+        for w_g, l_g in sets:
+            total_games_won += w_g
+            total_games_lost += l_g
+            if w_g == 7 or l_g == 7: tiebreaks += 1
+            if w_g == 6 and l_g == 0: bagels += 1 # Dal kanára
+            
+    # Procházíme prohry
+    for _, row in all_losses.iterrows():
+        sets = parse_score(row['score'])
+        if not sets: continue
+        
+        # 1. set (z pohledu poraženého, takže první číslo je vítěz zápasu, druhé poražený)
+        # V DB je skóre vždy z pohledu vítěze, např. 6-4. Poražený tedy prohrál 4-6.
+        if sets[0][1] > sets[0][0]: first_set_wins += 1 # Poražený vyhrál 1. set
+        
+        for w_g, l_g in sets:
+            total_games_won += l_g # Poražený získal l_g
+            total_games_lost += w_g
+            if w_g == 7 or l_g == 7: tiebreaks += 1
+            if w_g == 6 and l_g == 0: bagels += 1 # Dostal kanára (počítáme výskyt v zápase)
 
-# ==============================================================================\
+    stats["first_set_win_rate"] = first_set_wins / total_matches
+    stats["tiebreak_rate"] = tiebreaks / total_matches # Pravděpodobnost TB v zápase
+    stats["bagel_rate"] = bagels / total_matches
+    stats["avg_games_won"] = total_games_won / total_matches
+    stats["avg_games_lost"] = total_games_lost / total_matches
+    
+    # Analýza servisu (pokud jsou data)
+    sv_gms = all_wins['w_SvGms'].sum() + all_losses['l_SvGms'].sum()
+    bp_faced = all_wins['w_bpFaced'].sum() + all_losses['l_bpFaced'].sum()
+    bp_saved = all_wins['w_bpSaved'].sum() + all_losses['l_bpSaved'].sum()
+    
+    if sv_gms > 0:
+        # Odhad hold rate: (Service Games - Breaks Conceded) / Service Games
+        breaks_conceded = bp_faced - bp_saved
+        stats["hold_serve_rate"] = max(0, (sv_gms - breaks_conceded) / sv_gms)
+        
+    return stats
+
+def generate_all_markets(p1_name, p2_name, surface):
+    """Generuje pravděpodobnosti pro všech 18 trhů."""
+    s1 = get_advanced_stats(p1_name, surface)
+    s2 = get_advanced_stats(p2_name, surface)
+    
+    if not s1 or not s2: return None
+    
+    markets = []
+    
+    # 1. VÍTĚZ ZÁPASU
+    prob_p1 = (s1['win_rate'] * 0.6 + s1['hold_serve_rate'] * 0.4)
+    prob_p2 = (s2['win_rate'] * 0.6 + s2['hold_serve_rate'] * 0.4)
+    total = prob_p1 + prob_p2
+    p1_win_prob = prob_p1 / total
+    
+    markets.append({"market": "Vítěz zápasu", "selection": p1_name, "prob": p1_win_prob})
+    markets.append({"market": "Vítěz zápasu", "selection": p2_name, "prob": 1 - p1_win_prob})
+    
+    # 2. VÍTĚZ 1. SETU
+    p1_fs_prob = (s1['first_set_win_rate'] + (1 - s2['first_set_win_rate'])) / 2
+    markets.append({"market": "Vítěz 1. setu", "selection": p1_name, "prob": p1_fs_prob})
+    
+    # 3. POČET GAMŮ V 1. SETU (Over 9.5)
+    # Pokud oba dobře servírují, bude to over
+    avg_hold = (s1['hold_serve_rate'] + s2['hold_serve_rate']) / 2
+    prob_over_95 = 0.3 + (avg_hold * 0.6) # Heuristika
+    markets.append({"market": "Počet gamů 1. set", "selection": "Over 9.5", "prob": prob_over_95})
+    
+    # 4. TIEBREAK V ZÁPASU
+    tb_prob = (s1['tiebreak_rate'] + s2['tiebreak_rate']) / 2
+    # Zvýšíme pravděpodobnost, pokud je to rychlý povrch
+    if surface in ['Grass', 'Hard']: tb_prob *= 1.2
+    markets.append({"market": "Tiebreak v zápasu", "selection": "ANO", "prob": min(tb_prob, 0.8)})
+    
+    # 5. VYHRAJE SVŮJ PRVNÍ SERVIS GAME
+    # Odvozeno z Hold Rate
+    markets.append({"market": "Vyhraje 1. servis game", "selection": p1_name, "prob": s1['hold_serve_rate']})
+    markets.append({"market": "Vyhraje 1. servis game", "selection": p2_name, "prob": s2['hold_serve_rate']})
+    
+    # 6. PŘESNÝ VÝSLEDEK (Zápas)
+    # Zjednodušený model pro 2-setové zápasy
+    if p1_win_prob > 0.7:
+        markets.append({"market": "Přesný výsledek", "selection": "2:0", "prob": p1_win_prob * 0.7})
+    elif p1_win_prob < 0.3:
+        markets.append({"market": "Přesný výsledek", "selection": "0:2", "prob": (1-p1_win_prob) * 0.7})
+    else:
+        markets.append({"market": "Přesný výsledek", "selection": "2:1 / 1:2", "prob": 0.6}) # Vyrovnané
+        
+    # 7. HANDICAP GAMŮ (Zápas)
+    # Odhad rozdílu gamů
+    diff = (s1['avg_games_won'] - s1['avg_games_lost']) - (s2['avg_games_won'] - s2['avg_games_lost'])
+    handicap_line = round(diff)
+    if handicap_line == 0: handicap_line = -0.5 if p1_win_prob > 0.5 else 0.5
+    
+    markets.append({"market": "Handicap gamů", "selection": f"{p1_name} ({handicap_line})", "prob": 0.55}) # 50/50 line
+    
+    # 8. POČET GAMŮ V ZÁPASU (Total)
+    avg_games = (s1['avg_games_won'] + s1['avg_games_lost'] + s2['avg_games_won'] + s2['avg_games_lost']) / 2
+    markets.append({"market": "Počet gamů v zápasu", "selection": f"Over {int(avg_games)}", "prob": 0.55})
+    
+    # 9. KANÁR (6-0)
+    bagel_prob = (s1['bagel_rate'] + s2['bagel_rate']) / 2
+    markets.append({"market": "Kanár v zápasu (6-0)", "selection": "ANO", "prob": bagel_prob})
+    markets.append({"market": "Kanár v zápasu (6-0)", "selection": "NE", "prob": 1 - bagel_prob})
+    
+    # 10. HRÁČ VYHRAJE ALESPOŇ SET
+    # Pokud je favorit, je to vysoké
+    p1_set_prob = p1_win_prob + (1-p1_win_prob) * 0.4 # Šance na výhru + šance na prohru 1:2
+    markets.append({"market": "Vyhraje alespoň set", "selection": p1_name, "prob": min(p1_set_prob, 0.95)})
+    
+    # 11. 1. SET / ZÁPAS (Double Result)
+    # P1/P1
+    markets.append({"market": "1. Set / Zápas", "selection": f"{p1_name} / {p1_name}", "prob": p1_win_prob * p1_fs_prob})
+    
+    # 12. PŘESNÝ POČET SETŮ
+    prob_3_sets = 0.3 + (0.4 if abs(p1_win_prob - 0.5) < 0.1 else 0) # Pokud je to vyrovnané, roste šance na 3 sety
+    markets.append({"market": "Přesný počet setů", "selection": "3", "prob": prob_3_sets})
+    markets.append({"market": "Přesný počet setů", "selection": "2", "prob": 1 - prob_3_sets})
+
+    return markets
+
+# ==============================================================================
+# 4. SCRAPER (TENNIS EXPLORER) - DYNAMICKÉ DATUM
+# ==============================================================================
+@st.cache_data(ttl=1800)
+def scrape_tennis_explorer(date_obj):
+    # Dynamická URL podle data
+    year = date_obj.year
+    month = date_obj.month
+    day = date_obj.day
+    
+    # TennisExplorer formát: year=2026&month=02&day=22
+    url = f"https://www.tennisexplorer.com/matches/?type=atp-single&year={year}&month={month}&day={day}"
+    
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        r = requests.get(url, headers=headers)
+        dfs = pd.read_html(r.text)
+        
+        # Hledáme největší tabulku
+        main_df = max(dfs, key=len)
+        return main_df
+    except:
+        return None
+
+def clean_name(name):
+    name = re.sub(r'\(\d+\)', '', str(name)).strip()
+    return name
+
+def parse_matches(df):
+    matches = []
+    current_tour = "Unknown"
+    
+    # Iterace (zjednodušená logika pro TennisExplorer)
+    # Hledáme řádky s časem a jmény
+    pending_p1 = None
+    pending_time = None
+    
+    df = df.astype(str)
+    
+    for idx, row in df.iterrows():
+        col0 = str(row[0])
+        col1 = str(row[1])
+        
+        if "H2H" in str(row.values):
+            current_tour = col0 if len(col0) > 2 else col1
+            pending_p1 = None
+            continue
+            
+        # Detekce času (např. 14:30)
+        if ":" in col0 and len(col0) < 6:
+            pending_time = col0
+            pending_p1 = clean_name(col1)
+        elif pending_p1:
+            # Druhý řádek zápasu
+            p2 = clean_name(col1)
+            matches.append({
+                "time": pending_time,
+                "tour": current_tour,
+                "p1": pending_p1,
+                "p2": p2
+            })
+            pending_p1 = None
+            
+    return matches
+
+def find_in_db(name):
+    if not name or not db_players: return None
+    # Zkusíme přímou shodu nebo otočení jména (Alcaraz C. -> C. Alcaraz)
+    parts = name.split()
+    candidates = [name]
+    if len(parts) > 1: candidates.append(f"{parts[-1]} {parts[0]}")
+    
+    best_match = process.extractOne(name, db_players)
+    if best_match and best_match[1] > 85: return best_match[0]
+    
+    # Zkusíme otočené
+    if len(parts) > 1:
+        best_match_rev = process.extractOne(f"{parts[-1]} {parts[0]}", db_players)
+        if best_match_rev and best_match_rev[1] > 85: return best_match_rev[0]
+        
+    return None
+
+# ==============================================================================
 # 5. UI APLIKACE
-# ==============================================================================\
+# ==============================================================================
 
-# Tlačítko pro stažení
-if st.button("📡 Stáhnout dnešní program (TennisExplorer)", type="primary"):
+# Výběr data
+col_d, col_b = st.columns([3, 1])
+selected_date = col_d.date_input("Vyber datum zápasů:", datetime.now(), min_value=datetime.now(), max_value=datetime.now() + timedelta(days=7))
+
+if col_b.button("📡 Stáhnout program a analyzovat", type="primary"):
     
-    with st.spinner("Stahuji data z webu a analyzuji..."):
-        try:
-            # 1. Scraping
-            url = "https://www.tennisexplorer.com/matches/?type=atp-single" # ATP Singles
-            headers = {"User-Agent": "Mozilla/5.0"}
-            r = requests.get(url, headers=headers)
+    with st.spinner(f"Stahuji program pro {selected_date.strftime('%d.%m.%Y')}..."):
+        raw_df = scrape_tennis_explorer(selected_date)
+        
+        if raw_df is None:
+            st.error("Nepodařilo se stáhnout data z TennisExplorer. Web může být nedostupný.")
+        else:
+            matches = parse_matches(raw_df)
             
-            # Načteme všechny tabulky
-            dfs = pd.read_html(r.text)
-            
-            # Najdeme tu největší tabulku (to je ta s programem)
-            main_df = max(dfs, key=len)
-            
-            # 2. Parsing (Čištění)
-            parsed_matches = parse_tennis_explorer(main_df)
-            
-            if not parsed_matches:
-                st.error("Nepodařilo se najít zápasy v tabulce. Web mohl změnit strukturu.")
-                st.dataframe(main_df.head()) # Debug
+            if not matches:
+                st.warning("Nenašel jsem žádné zápasy. Zkontroluj datum nebo strukturu webu.")
+                st.dataframe(raw_df.head())
             else:
-                st.success(f"Nalezeno {len(parsed_matches)} zápasů! Počítám predikce...")
+                st.success(f"Nalezeno {len(matches)} zápasů. Počítám predikce pro 18 trhů...")
                 
-                # 3. Predikce pro každý zápas
-                results = []
+                # Analýza
+                analyzed_matches = []
                 
-                progress_bar = st.progress(0)
-                for i, m in enumerate(parsed_matches):
-                    # Určení povrchu podle turnaje (zjednodušené)
-                    surface = "Hard" # Default
-                    tour_lower = m['tournament'].lower()
-                    if "clay" in tour_lower or "rio" in tour_lower or "buenos" in tour_lower: surface = "Clay"
-                    if "grass" in tour_lower: surface = "Grass"
-                    if "doha" in tour_lower: surface = "Hard"
+                progress = st.progress(0)
+                for i, m in enumerate(matches):
+                    p1_db = find_in_db(m['p1'])
+                    p2_db = find_in_db(m['p2'])
                     
-                    # Hledání v DB
-                    p1_db = find_player_in_db(m['p1'])
-                    p2_db = find_player_in_db(m['p2'])
-                    
-                    prob = 0.5
-                    winner = "Neznámý"
+                    # Určení povrchu
+                    surface = "Hard"
+                    t_low = m['tour'].lower()
+                    if "clay" in t_low or "rio" in t_low: surface = "Clay"
+                    if "grass" in t_low: surface = "Grass"
                     
                     if p1_db and p2_db:
-                        prob1 = calculate_win_prob(p1_db, surface)
-                        prob2 = calculate_win_prob(p2_db, surface)
-                        
-                        total = prob1 + prob2
-                        if total > 0:
-                            final1 = prob1 / total
-                            if final1 > 0.5:
-                                prob = final1
-                                winner = p1_db
-                            else:
-                                prob = 1 - final1
-                                winner = p2_db
-                        
-                        results.append({
-                            "time": m['time'],
-                            "tour": m['tournament'],
-                            "p1_web": m['p1'], "p2_web": m['p2'],
-                            "p1_db": p1_db, "p2_db": p2_db,
-                            "winner": winner,
-                            "prob": prob,
-                            "surface": surface
-                        })
-                    progress_bar.progress((i + 1) / len(parsed_matches))
+                        markets = generate_all_markets(p1_db, p2_db, surface)
+                        if markets:
+                            analyzed_matches.append({
+                                "info": m,
+                                "p1_db": p1_db,
+                                "p2_db": p2_db,
+                                "surface": surface,
+                                "markets": markets
+                            })
+                    progress.progress((i+1)/len(matches))
                 
-                # 4. Vykreslení výsledků
+                # --- VYKRESLENÍ VÝSLEDKŮ ---
                 
-                # A) TOP TIPY (Důvěra > 65%)
-                st.subheader("🔥 NEJLEPŠÍ TIPY DNE")
-                results.sort(key=lambda x: x['prob'], reverse=True)
+                # 1. TOP TIPY (>60%)
+                st.subheader("🔥 TOP TIPY DNE (Min. důvěra 60%)")
                 
-                top_tips = [r for r in results if r['prob'] > 0.65]
+                top_tips_found = False
+                for am in analyzed_matches:
+                    # Najdeme nejlepší tipy v tomto zápase
+                    best_market = max(am['markets'], key=lambda x: x['prob'])
+                    
+                    if best_market['prob'] >= 0.60:
+                        top_tips_found = True
+                        with st.container():
+                            st.markdown(f"""
+                            <div class="tip-card">
+                                <div style="font-size: 0.8em; color: #555;">{am['info']['time']} | {am['info']['tour']} ({am['surface']})</div>
+                                <div style="font-size: 1.1em; font-weight: bold;">{am['p1_db']} vs {am['p2_db']}</div>
+                                <hr style="margin: 5px 0;">
+                                <div style="font-size: 1.2em;">🎯 {best_market['market']}: <strong>{best_market['selection']}</strong></div>
+                                <div>Důvěra: <strong>{int(best_market['prob']*100)}%</strong> | Fair Kurz: <strong>{round(1/best_market['prob'], 2)}</strong></div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                if not top_tips_found:
+                    st.info("Dnes žádné vysoce pravděpodobné tipy (>60%).")
                 
-                if top_tips:
-                    for tip in top_tips[:5]:
-                        st.markdown(f"""
-                        <div class="tip-card">
-                            <div class="tour-header">{tip['tour']} ({tip['surface']}) | {tip['time']}</div>
-                            <div class="player-name">🏆 {tip['winner']}</div>
-                            <div class="vs">{tip['p1_db']} vs {tip['p2_db']}</div>
-                            <div>Důvěra modelu: <strong>{int(tip['prob']*100)}%</strong></div>
-                            <div>Férový kurz: <strong>{round(1/tip['prob'], 2)}</strong></div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    st.info("Dnes žádné 'tutovky' (nad 65%). Zápasy jsou vyrovnané.")
-                
-                # B) KOMPLETNÍ PROGRAM
                 st.divider()
-                st.subheader("📋 Kompletní program a analýza")
                 
-                for res in results:
-                    with st.container():
-                        c1, c2, c3, c4 = st.columns([1, 3, 2, 2])
+                # 2. VŠECHNY ZÁPASY (Detailní rozpis)
+                st.subheader("📋 Kompletní analýza zápasů")
+                
+                for am in analyzed_matches:
+                    with st.expander(f"🎾 {am['info']['time']} | {am['p1_db']} vs {am['p2_db']}"):
+                        c1, c2 = st.columns(2)
+                        
+                        # Rozdělení trhů do dvou sloupců
+                        half = len(am['markets']) // 2
+                        left_markets = am['markets'][:half]
+                        right_markets = am['markets'][half:]
+                        
                         with c1:
-                            st.caption(res['time'])
+                            for m in left_markets:
+                                color_class = "high-conf" if m['prob'] > 0.6 else ""
+                                st.markdown(f"""
+                                <div class="market-box">
+                                    <div>{m['market']}</div>
+                                    <div class="{color_class}">{m['selection']} ({int(m['prob']*100)}%)</div>
+                                    <div style="font-size: 0.8em; color: #777;">Kurz: {round(1/m['prob'], 2)}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
                         with c2:
-                            st.write(f"**{res['p1_web']}** vs **{res['p2_web']}**")
-                            st.caption(f"{res['tour']}")
-                        with c3:
-                            if res['prob'] > 0.55:
-                                st.markdown(f"<span style='color:green'>Tip: {res['winner']}</span>", unsafe_allow_html=True)
-                            else:
-                                st.write("Vyrovnané")
-                        with c4:
-                            st.progress(res['prob'])
-                            st.caption(f"{int(res['prob']*100)}%")
-                        st.markdown("---")
+                            for m in right_markets:
+                                color_class = "high-conf" if m['prob'] > 0.6 else ""
+                                st.markdown(f"""
+                                <div class="market-box">
+                                    <div>{m['market']}</div>
+                                    <div class="{color_class}">{m['selection']} ({int(m['prob']*100)}%)</div>
+                                    <div style="font-size: 0.8em; color: #777;">Kurz: {round(1/m['prob'], 2)}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
 
-        except Exception as e:
-            st.error(f"Chyba při stahování: {e}")
-            st.info("Zkus to za chvíli znovu, web může být přetížený.")
-
-# Manuální sekce pro jistotu
+# Manuální sekce (pokud scraper selže)
 st.divider()
-st.subheader("🔍 Nenašel jsi zápas? Zadej ho ručně")
-col1, col2, col3 = st.columns(3)
-with col1:
-    man_p1 = st.selectbox("Hráč 1", db_players, key="m1")
-with col2:
-    man_p2 = st.selectbox("Hráč 2", db_players, key="m2")
-with col3:
-    if st.button("Analyzovat"):
-        # ... (zde by byla stejná logika výpočtu)
-        pass
+with st.expander("🔍 Manuální výběr hráčů (pokud zápas chybí)"):
+    c1, c2, c3 = st.columns(3)
+    mp1 = c1.selectbox("Hráč 1", db_players, key="m1")
+    mp2 = c2.selectbox("Hráč 2", db_players, key="m2")
+    msurf = c3.selectbox("Povrch", ["Hard", "Clay", "Grass"], key="ms")
+    
+    if st.button("Analyzovat manuálně"):
+        markets = generate_all_markets(mp1, mp2, msurf)
+        if markets:
+            st.write("Výsledky analýzy:")
+            st.dataframe(pd.DataFrame(markets).style.format({"prob": "{:.0%}"}))
