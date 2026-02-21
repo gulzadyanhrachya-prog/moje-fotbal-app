@@ -5,7 +5,10 @@ import requests
 from datetime import datetime
 from thefuzz import process
 
-# ==============================================================================\n# 1. KONFIGURACE A STYLY\n# ==============================================================================\n
+# ==============================================================================\
+# 1. KONFIGURACE A STYLY\
+# ==============================================================================\
+
 st.set_page_config(page_title="Tennis Betting AI 2026", layout="wide", page_icon="🎾")
 
 st.markdown("""
@@ -18,7 +21,10 @@ st.markdown("""
 
 st.title("🎾 Tennis AI: Live Matches & Predictions (2026 Ready)")
 
-# ==============================================================================\n# 2. NAČTENÍ HISTORICKÝCH DAT (MOZEK)\n# ==============================================================================\n
+# ==============================================================================\
+# 2. NAČTENÍ HISTORICKÝCH DAT (MOZEK)\
+# ==============================================================================\
+
 @st.cache_data(ttl=3600)
 def load_historical_data():
     # Stahujeme data ATP a WTA z open-source databáze Jeffa Sackmanna
@@ -64,10 +70,13 @@ if not df_history.empty:
 else:
     db_players = []
 
-# ==============================================================================\n# 3. FUNKCE PRO API (ROZVRH)\n# ==============================================================================\n
+# ==============================================================================\
+# 3. FUNKCE PRO API (ROZVRH) - OPRAVENÁ URL\
+# ==============================================================================\
+
 def get_todays_matches(api_key, date_str):
-    # Použijeme Tennis Live Data API
-    url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/matches/date"
+    # OPRAVA: Správný endpoint pro Matchstat API je obvykle '/schedule'
+    url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v1/schedule"
     host = "tennis-api-atp-wta-itf.p.rapidapi.com"
     
     headers = {
@@ -82,7 +91,10 @@ def get_todays_matches(api_key, date_str):
     except:
         return None
 
-# ==============================================================================\n# 4. POMOCNÉ FUNKCE (PREDIKCE & PÁROVÁNÍ)\n# ==============================================================================\n
+# ==============================================================================\
+# 4. POMOCNÉ FUNKCE (PREDIKCE & PÁROVÁNÍ)\
+# ==============================================================================\
+
 def find_player_in_db(api_name):
     # Zkusí najít jméno z API v naší databázi (Fuzzy matching)
     if not api_name or not db_players: return None
@@ -112,7 +124,9 @@ def calculate_win_prob(player, surface):
     
     return (wr_surf * 0.7) + (wr_total * 0.3)
 
-# ==============================================================================\n# 5. UI APLIKACE\n# ==============================================================================\n
+# ==============================================================================\
+# 5. UI APLIKACE\
+# ==============================================================================\
 
 # Sidebar - API Klíč
 try:
@@ -141,93 +155,102 @@ with tab1:
                 
                 matches_found = []
                 
+                # Logika pro parsování JSONu
                 raw_matches = []
-                if api_data and 'data' in api_data:
-                    raw_matches = api_data['data']
-                elif isinstance(api_data, list):
-                    raw_matches = api_data
-                elif api_data and 'results' in api_data:
-                    raw_matches = api_data['results']
                 
-                if not raw_matches:
-                    st.warning("Žádné zápasy nenalezeny nebo chyba API.")
-                    if api_data: st.json(api_data)
+                # Kontrola chyb API
+                if api_data and "message" in api_data:
+                    st.error(f"Chyba API: {api_data['message']}")
                 else:
-                    for m in raw_matches:
-                        try:
-                            p1_api = m.get('player1', {}).get('name') or m.get('home_player')
-                            p2_api = m.get('player2', {}).get('name') or m.get('away_player')
-                            tournament = m.get('tournament', {}).get('name', 'Unknown')
-                            
-                            surface_api = m.get('tournament', {}).get('surface', 'Hard')
-                            
-                            surface_db = "Hard"
-                            if surface_api and "Clay" in surface_api: surface_db = "Clay"
-                            elif surface_api and "Grass" in surface_api: surface_db = "Grass"
-                            elif surface_api and "Carpet" in surface_api: surface_db = "Carpet"
-                            
-                            if p1_api and p2_api:
-                                p1_db = find_player_in_db(p1_api)
-                                p2_db = find_player_in_db(p2_api)
-                                
-                                if p1_db and p2_db:
-                                    prob1 = calculate_win_prob(p1_db, surface_db)
-                                    prob2 = calculate_win_prob(p2_db, surface_db)
-                                    
-                                    total_prob = prob1 + prob2
-                                    if total_prob > 0:
-                                        final_p1 = prob1 / total_prob
-                                        final_p2 = prob2 / total_prob
-                                    else:
-                                        final_p1 = 0.5
-                                        final_p2 = 0.5
-                                    
-                                    matches_found.append({
-                                        "p1": p1_db, "p2": p2_db,
-                                        "prob1": final_p1, "prob2": final_p2,
-                                        "tour": tournament, "surface": surface_db
-                                    })
-                        except: continue
-
-                    if matches_found:
-                        st.success(f"Analyzováno {len(matches_found)} zápasů s historií v DB.")
-                        
-                        matches_found.sort(key=lambda x: abs(x['prob1'] - 0.5), reverse=True)
-                        
-                        st.subheader("🔥 TOP TIPY DNE")
-                        for match in matches_found[:5]:
-                            p1 = match['p1']
-                            p2 = match['p2']
-                            prob = match['prob1'] if match['prob1'] > 0.5 else match['prob2']
-                            winner = p1 if match['prob1'] > 0.5 else p2
-                            
-                            if prob > 0.60:
-                                st.markdown(f"""
-                                <div class="tip-card">
-                                    <h4>🏆 {winner}</h4>
-                                    <p>{p1} vs {p2} | {match['tour']} ({match['surface']})</p>
-                                    <p>Důvěra modelu: <strong>{int(prob*100)}%</strong> (Fair kurz: {round(1/prob, 2)})</p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        
-                        st.divider()
-                        st.subheader("📋 Všechny analyzované zápasy")
-                        for match in matches_found:
-                            c1, c2, c3 = st.columns([2, 1, 2])
-                            with c1: 
-                                st.write(f"**{match['p1']}**")
-                                if match['prob1'] > 0.5: st.progress(match['prob1'])
-                            with c2: st.caption(f"{match['surface']}")
-                            with c3: 
-                                st.write(f"**{match['p2']}**")
-                                if match['prob2'] > 0.5: st.progress(match['prob2'])
-                            st.markdown("---")
-                            
+                    if api_data and 'data' in api_data:
+                        raw_matches = api_data['data']
+                    elif isinstance(api_data, list):
+                        raw_matches = api_data
+                    elif api_data and 'results' in api_data:
+                        raw_matches = api_data['results']
+                    
+                    if not raw_matches:
+                        st.warning("Žádné zápasy nenalezeny. Zkus jiné datum.")
+                        if api_data: 
+                            with st.expander("Zobrazit odpověď API"):
+                                st.json(api_data)
                     else:
-                        st.info("Zápasy staženy, ale nenašel jsem hráče v historické databázi.")
-                        if raw_matches:
-                            with st.expander("Zobrazit surová data z API"):
-                                st.json(raw_matches)
+                        for m in raw_matches:
+                            try:
+                                # Získání jmen z API (struktura se může lišit)
+                                p1_api = m.get('player1', {}).get('name') or m.get('home_player')
+                                p2_api = m.get('player2', {}).get('name') or m.get('away_player')
+                                tournament = m.get('tournament', {}).get('name', 'Unknown')
+                                
+                                surface_api = m.get('tournament', {}).get('surface', 'Hard')
+                                
+                                surface_db = "Hard"
+                                if surface_api and "Clay" in surface_api: surface_db = "Clay"
+                                elif surface_api and "Grass" in surface_api: surface_db = "Grass"
+                                elif surface_api and "Carpet" in surface_api: surface_db = "Carpet"
+                                
+                                if p1_api and p2_api:
+                                    p1_db = find_player_in_db(p1_api)
+                                    p2_db = find_player_in_db(p2_api)
+                                    
+                                    if p1_db and p2_db:
+                                        prob1 = calculate_win_prob(p1_db, surface_db)
+                                        prob2 = calculate_win_prob(p2_db, surface_db)
+                                        
+                                        total_prob = prob1 + prob2
+                                        if total_prob > 0:
+                                            final_p1 = prob1 / total_prob
+                                            final_p2 = prob2 / total_prob
+                                        else:
+                                            final_p1 = 0.5
+                                            final_p2 = 0.5
+                                        
+                                        matches_found.append({
+                                            "p1": p1_db, "p2": p2_db,
+                                            "prob1": final_p1, "prob2": final_p2,
+                                            "tour": tournament, "surface": surface_db
+                                        })
+                            except: continue
+
+                        if matches_found:
+                            st.success(f"Analyzováno {len(matches_found)} zápasů s historií v DB.")
+                            
+                            matches_found.sort(key=lambda x: abs(x['prob1'] - 0.5), reverse=True)
+                            
+                            st.subheader("🔥 TOP TIPY DNE")
+                            for match in matches_found[:5]:
+                                p1 = match['p1']
+                                p2 = match['p2']
+                                prob = match['prob1'] if match['prob1'] > 0.5 else match['prob2']
+                                winner = p1 if match['prob1'] > 0.5 else p2
+                                
+                                if prob > 0.60:
+                                    st.markdown(f"""
+                                    <div class="tip-card">
+                                        <h4>🏆 {winner}</h4>
+                                        <p>{p1} vs {p2} | {match['tour']} ({match['surface']})</p>
+                                        <p>Důvěra modelu: <strong>{int(prob*100)}%</strong> (Fair kurz: {round(1/prob, 2)})</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            st.divider()
+                            st.subheader("📋 Všechny analyzované zápasy")
+                            for match in matches_found:
+                                c1, c2, c3 = st.columns([2, 1, 2])
+                                with c1: 
+                                    st.write(f"**{match['p1']}**")
+                                    if match['prob1'] > 0.5: st.progress(match['prob1'])
+                                with c2: st.caption(f"{match['surface']}")
+                                with c3: 
+                                    st.write(f"**{match['p2']}**")
+                                    if match['prob2'] > 0.5: st.progress(match['prob2'])
+                                st.markdown("---")
+                                
+                        else:
+                            st.info("Zápasy staženy, ale nenašel jsem hráče v historické databázi.")
+                            if raw_matches:
+                                with st.expander("Zobrazit surová data z API"):
+                                    st.json(raw_matches)
 
 # --- TAB 2: MANUÁLNÍ ANALÝZA ---
 with tab2:
