@@ -9,19 +9,21 @@ from thefuzz import process
 # ==============================================================================
 # 1. KONFIGURACE A STYLY
 # ==============================================================================
-st.set_page_config(page_title="Tennis Pro Analyst v9.0", layout="wide", page_icon="🎾")
+st.set_page_config(page_title="Tennis Pro Analyst v10.0", layout="wide", page_icon="🎾")
 
 st.markdown("""
 <style>
     .metric-card { background-color: #f0f2f6; padding: 15px; border-radius: 8px; border-left: 4px solid #4CAF50; margin-bottom: 10px; }
+    .match-row { background-color: #ffffff; padding: 10px; border-radius: 5px; margin-bottom: 8px; border: 1px solid #e0e0e0; }
     .stat-row { display: flex; justify-content: space-between; font-size: 0.9em; border-bottom: 1px solid #eee; padding: 3px 0; }
     .market-header { font-weight: bold; color: #333; margin-top: 10px; }
     .high-value { color: #28a745; font-weight: bold; }
+    .low-value { color: #666; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎾 Tennis AI: Statistical Market Model")
-st.caption("Implementuje logiku: Skill Gap vs Total Games, Surface Bias, TPW Dominance")
+st.title("🎾 Tennis AI: Full Schedule & Predictions")
+st.caption("Verze 10.0: Zobrazuje všechny zápasy (nejen top tipy)")
 
 # ==============================================================================
 # 2. NAČTENÍ DAT (JEFF SACKMANN DB)
@@ -81,7 +83,6 @@ def calculate_advanced_metrics(player_name, surface, last_n=50):
     p_wins = df[df['winner_name'] == player_name]
     p_loss = df[df['loser_name'] == player_name]
     
-    # Surface filter
     p_wins_surf = p_wins[p_wins['surface'] == surface]
     p_loss_surf = p_loss[p_loss['surface'] == surface]
     
@@ -92,7 +93,6 @@ def calculate_advanced_metrics(player_name, surface, last_n=50):
         
     if matches.empty: return None
     
-    # Agregace
     stats = {
         "matches": len(matches),
         "wins": 0,
@@ -109,15 +109,13 @@ def calculate_advanced_metrics(player_name, surface, last_n=50):
     
     for _, row in matches.iterrows():
         is_winner = row['winner_name'] == player_name
-        
-        # Počet setů (hrubý odhad podle skóre)
         score = str(row['score'])
-        sets_in_match = score.count('-') # Zjednodušené
+        sets_in_match = score.count('-')
         stats["sets_played"] += sets_in_match
         
         if is_winner:
             stats["wins"] += 1
-            stats["sets_won"] += 2 # Většinou 2 sety na výhru
+            stats["sets_won"] += 2
             stats["serve_points_total"] += row['w_svpt']
             stats["serve_points_won"] += (row['w_1stWon'] + row['w_2ndWon'])
             stats["service_games"] += row['w_SvGms']
@@ -137,12 +135,11 @@ def calculate_advanced_metrics(player_name, surface, last_n=50):
 
     def safe_div(a, b): return a / b if b > 0 else 0
     
-    # Klíčové metriky
     tpw_ratio = safe_div(stats["serve_points_won"] + stats["return_points_won"], 
                          stats["serve_points_total"] + stats["return_points_total"])
     
     hold_pct = safe_div(stats["service_games"] - (stats["bp_faced"] - stats["bp_saved"]), stats["service_games"])
-    break_pct = safe_div(stats["return_points_won"], stats["return_points_total"]) # Proxy pro break
+    break_pct = safe_div(stats["return_points_won"], stats["return_points_total"])
     
     return {
         "matches": stats["matches"],
@@ -153,40 +150,20 @@ def calculate_advanced_metrics(player_name, surface, last_n=50):
     }
 
 def predict_match_logic(s1, s2, surface):
-    """
-    Jádro modelu založené na analýze z textu.
-    """
-    # 1. Vítěz (TPW Dominance)
-    # TPW je nejsilnější prediktor. Rozdíl 1% v TPW je obrovský.
     tpw_diff = s1['tpw'] - s2['tpw']
-    # Sigmoid funkce pro převod rozdílu na pravděpodobnost
     prob_p1 = 1 / (1 + np.exp(-15 * tpw_diff)) 
     
-    # 2. Total Games (Skill Gap Theory)
-    # Text: Průměr je 22.9 gamů.
     base_games = 22.9
-    
-    # Úprava podle povrchu (Text: Fast surfaces = more games)
     if surface == "Grass" or surface == "Carpet": base_games += 1.0
     if surface == "Clay": base_games -= 0.5
     
-    # Úprava podle Skill Gap (Text: Close match = more games)
-    # Skill gap je absolutní rozdíl v pravděpodobnosti výhry
-    skill_gap = abs(prob_p1 - 0.5) * 2 # 0 = vyrovnané, 1 = jasný favorit
-    
-    # Pokud je skill gap malý (0), přidáme gamy. Pokud velký (1), ubereme.
-    # Rozsah úpravy: +/- 2.5 gamu
+    skill_gap = abs(prob_p1 - 0.5) * 2 
     game_adjustment = (0.5 - skill_gap) * 5 
     expected_games = base_games + game_adjustment
     
-    # 3. Sets (2 vs 3)
-    # Text: 65% zápasů končí 2:0.
     prob_2_sets = 0.65
-    # Pokud je zápas vyrovnaný, šance na 3 sety roste
-    if skill_gap < 0.2: # Velmi vyrovnané
-        prob_2_sets = 0.55 # Snížíme šanci na 2 sety
-    elif skill_gap > 0.6: # Jasný favorit
-        prob_2_sets = 0.80 # Zvýšíme šanci na 2 sety
+    if skill_gap < 0.2: prob_2_sets = 0.55
+    elif skill_gap > 0.6: prob_2_sets = 0.80
         
     return {
         "prob_p1": prob_p1,
@@ -207,25 +184,17 @@ def generate_markets(p1_name, p2_name, surface):
     
     markets = []
     
-    # 1. VÍTĚZ
     markets.append({"market": "Vítěz zápasu", "selection": p1_name, "prob": prob_p1})
     markets.append({"market": "Vítěz zápasu", "selection": p2_name, "prob": prob_p2})
     
-    # 2. TOTAL GAMES (Over/Under)
-    line = round(pred['expected_games']) # Např. 23
-    # Pravděpodobnost Overu klesá, pokud je line vysoko nastavená
-    # Zde zjednodušujeme: Model věří svému číslu 'expected_games'
-    # Pokud je expected 24 a line je 22.5, Over má vysokou pravděpodobnost
+    line = round(pred['expected_games'])
     markets.append({"market": "Počet gamů", "selection": f"Over {line-0.5}", "prob": 0.60})
     markets.append({"market": "Počet gamů", "selection": f"Under {line+0.5}", "prob": 0.60})
     
-    # 3. SETY
     prob_3_sets = 1 - pred['prob_2_sets']
     markets.append({"market": "Počet setů", "selection": "2 sety", "prob": pred['prob_2_sets']})
     markets.append({"market": "Počet setů", "selection": "3 sety", "prob": prob_3_sets})
     
-    # 4. PŘESNÝ VÝSLEDEK
-    # Odvozeno z vítěze a počtu setů
     if prob_p1 > 0.5:
         prob_2_0 = prob_p1 * pred['prob_2_sets']
         prob_2_1 = prob_p1 * prob_3_sets
@@ -237,17 +206,13 @@ def generate_markets(p1_name, p2_name, surface):
         markets.append({"market": "Přesný výsledek", "selection": f"{p2_name} 2:0", "prob": prob_0_2})
         markets.append({"market": "Přesný výsledek", "selection": f"{p2_name} 2:1", "prob": prob_1_2})
         
-    # 5. TIEBREAK
-    # Závisí na Hold % obou hráčů
     avg_hold = (s1['hold_pct'] + s2['hold_pct']) / 2
-    tb_prob = 0.20 # Base
-    if avg_hold > 0.80: tb_prob = 0.45 # Servismani
+    tb_prob = 0.20 
+    if avg_hold > 0.80: tb_prob = 0.45 
     if surface == "Grass": tb_prob += 0.10
     
     markets.append({"market": "Tiebreak v zápasu", "selection": "ANO", "prob": tb_prob})
     
-    # 6. KANÁR (6-0)
-    # Pokud je skill gap obrovský
     bagel_prob = 0.05
     if pred['skill_gap'] > 0.7: bagel_prob = 0.25
     markets.append({"market": "Kanár (6-0)", "selection": "ANO", "prob": bagel_prob})
@@ -276,18 +241,33 @@ def parse_schedule(df):
     
     for _, row in df.iterrows():
         c0, c1 = str(row[0]), str(row[1])
+        
+        # Detekce turnaje (řádek obsahuje H2H)
         if "H2H" in str(row.values):
             current_tour = c0 if len(c0) > 2 else c1
             pending_p1 = None
             continue
         
-        if ":" in c0 and len(c0) < 6:
-            pending_time = c0
+        # Detekce času (např. 14:30) nebo slova Live
+        is_time_row = (":" in c0 and len(c0) < 6) or "Live" in c0
+        
+        if is_time_row:
+            pending_time = c0.replace("Live", "").strip()
             pending_p1 = re.sub(r'\(\d+\)', '', c1).strip()
         elif pending_p1:
+            # Druhý řádek zápasu (soupeř)
             p2 = re.sub(r'\(\d+\)', '', c1).strip()
-            matches.append({"time": pending_time, "tour": current_tour, "p1": pending_p1, "p2": p2})
+            
+            # Validace jmen (aby to nebyl bordel)
+            if len(pending_p1) > 2 and len(p2) > 2:
+                matches.append({
+                    "time": pending_time, 
+                    "tour": current_tour, 
+                    "p1": pending_p1, 
+                    "p2": p2
+                })
             pending_p1 = None
+            
     return matches
 
 def find_db_player(name):
@@ -321,58 +301,97 @@ with tab1:
                 st.error("Chyba stahování.")
             else:
                 matches = parse_schedule(raw_df)
-                results = []
                 
-                progress = st.progress(0)
-                for i, m in enumerate(matches):
-                    p1 = find_db_player(m['p1'])
-                    p2 = find_db_player(m['p2'])
+                if not matches:
+                    st.warning("Nenašel jsem žádné zápasy. Zkontroluj datum nebo strukturu webu.")
+                    st.dataframe(raw_df.head())
+                else:
+                    # Počítadlo
+                    st.info(f"Nalezeno {len(matches)} zápasů v programu. Hledám historii...")
                     
-                    surf = "Hard"
-                    if "clay" in m['tour'].lower(): surf = "Clay"
-                    elif "grass" in m['tour'].lower(): surf = "Grass"
+                    results = []
+                    progress = st.progress(0)
                     
-                    if p1 and p2:
-                        res = generate_markets(p1, p2, surf)
-                        if res:
-                            mkts, s1, s2, pred = res
-                            results.append({
-                                "info": m, "p1": p1, "p2": p2, "surf": surf,
-                                "markets": mkts, "pred": pred
-                            })
-                    progress.progress((i+1)/len(matches))
-                
-                # Vykreslení
-                st.subheader("🔥 TOP TIPY (Důvěra > 60%)")
-                
-                for res in results:
-                    # Filtrujeme jen silné tipy
-                    strong_mkts = [m for m in res['markets'] if m['prob'] > 0.60]
+                    for i, m in enumerate(matches):
+                        p1 = find_db_player(m['p1'])
+                        p2 = find_db_player(m['p2'])
+                        
+                        surf = "Hard"
+                        if "clay" in m['tour'].lower(): surf = "Clay"
+                        elif "grass" in m['tour'].lower(): surf = "Grass"
+                        
+                        if p1 and p2:
+                            res = generate_markets(p1, p2, surf)
+                            if res:
+                                mkts, s1, s2, pred = res
+                                results.append({
+                                    "info": m, "p1": p1, "p2": p2, "surf": surf,
+                                    "markets": mkts, "pred": pred, "s1": s1, "s2": s2
+                                })
+                        progress.progress((i+1)/len(matches))
                     
-                    if strong_mkts:
-                        with st.container():
-                            st.markdown(f"""
-                            <div class="metric-card">
-                                <div style="display:flex; justify-content:space-between;">
-                                    <span><strong>{res['info']['time']}</strong> | {res['info']['tour']} ({res['surf']})</span>
-                                    <span>Očekávané gamy: <strong>{round(res['pred']['expected_games'], 1)}</strong></span>
-                                </div>
-                                <h3 style="margin:5px 0;">{res['p1']} vs {res['p2']}</h3>
-                                <hr style="margin:5px 0;">
-                            """, unsafe_allow_html=True)
-                            
-                            cols = st.columns(3)
-                            for idx, mkt in enumerate(strong_mkts[:6]): # Max 6 tipů
-                                with cols[idx % 3]:
-                                    st.markdown(f"""
-                                    <div style="font-size:0.9em;">
-                                        <span class="market-header">{mkt['market']}</span><br>
-                                        <span class="high-value">{mkt['selection']}</span><br>
-                                        <span style="color:#666;">Důvěra: {int(mkt['prob']*100)}% (Kurz {round(1/mkt['prob'], 2)})</span>
+                    # --- SEKCE 1: TOP TIPY ---
+                    st.subheader("🔥 TOP TIPY (Důvěra > 60%)")
+                    top_tips_count = 0
+                    
+                    for res in results:
+                        strong_mkts = [m for m in res['markets'] if m['prob'] > 0.60]
+                        if strong_mkts:
+                            top_tips_count += 1
+                            with st.container():
+                                st.markdown(f"""
+                                <div class="metric-card">
+                                    <div style="display:flex; justify-content:space-between;">
+                                        <span><strong>{res['info']['time']}</strong> | {res['info']['tour']}</span>
+                                        <span>Očekávané gamy: <strong>{round(res['pred']['expected_games'], 1)}</strong></span>
                                     </div>
-                                    """, unsafe_allow_html=True)
+                                    <h3 style="margin:5px 0;">{res['p1']} vs {res['p2']}</h3>
+                                    <hr style="margin:5px 0;">
+                                """, unsafe_allow_html=True)
+                                
+                                cols = st.columns(3)
+                                for idx, mkt in enumerate(strong_mkts[:6]):
+                                    with cols[idx % 3]:
+                                        st.markdown(f"""
+                                        <div style="font-size:0.9em;">
+                                            <span class="market-header">{mkt['market']}</span><br>
+                                            <span class="high-value">{mkt['selection']}</span><br>
+                                            <span style="color:#666;">Důvěra: {int(mkt['prob']*100)}% (Kurz {round(1/mkt['prob'], 2)})</span>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    if top_tips_count == 0:
+                        st.info("Žádné silné tipy (>60%) pro dnešní den.")
+
+                    # --- SEKCE 2: VŠECHNY ZÁPASY (NOVÉ!) ---
+                    st.divider()
+                    st.subheader(f"📋 Kompletní program ({len(results)} analyzovaných zápasů)")
+                    
+                    for res in results:
+                        # Zjistíme favorita pro zobrazení
+                        prob = res['pred']['prob_p1']
+                        winner = res['p1'] if prob > 0.5 else res['p2']
+                        win_pct = int((prob if prob > 0.5 else 1-prob) * 100)
+                        
+                        with st.expander(f"🎾 {res['info']['time']} | {res['p1']} vs {res['p2']} ({win_pct}% {winner})"):
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                st.write(f"**{res['p1']}**")
+                                st.write(f"TPW: {int(res['s1']['tpw']*100)}%")
+                                st.write(f"Hold: {int(res['s1']['hold_pct']*100)}%")
+                            with c2:
+                                st.write(f"**{res['p2']}**")
+                                st.write(f"TPW: {int(res['s2']['tpw']*100)}%")
+                                st.write(f"Hold: {int(res['s2']['hold_pct']*100)}%")
                             
-                            st.markdown("</div>", unsafe_allow_html=True)
+                            st.markdown("---")
+                            st.write("**Všechny trhy:**")
+                            # Tabulka všech trhů pro tento zápas
+                            df_mkts = pd.DataFrame(res['markets'])
+                            df_mkts['Kurz'] = (1 / df_mkts['prob']).round(2)
+                            df_mkts['Důvěra'] = (df_mkts['prob'] * 100).astype(int).astype(str) + "%"
+                            st.dataframe(df_mkts[['market', 'selection', 'Důvěra', 'Kurz']], hide_index=True, use_container_width=True)
 
 with tab2:
     st.header("🔬 Detailní srovnání hráčů")
