@@ -13,7 +13,7 @@ st.markdown("Přehled aktuálního žebříčku tenistek na základě dat z Rapi
 @st.cache_data(ttl=3600) # Ukládá data do cache na 1 hodinu, aby se šetřily API requesty
 def get_data():
     # ZDE DOPLŇ SVOU URL Z RAPIDAPI (např. 'https://tennis-live-data.p.rapidapi.com/rankings/wta')
-    url = "https://tennis-live-data.p.rapidapi.com/rankings/wta" 
+    url = "https://tennis-live-data.p.rapidapi.com/rankings/WTA" 
     
     # API klíč se načte z "Secrets" ve Streamlitu (bezpečné uložení)
     # Pokud testuješ lokálně, můžeš klíč vložit přímo, ale na GitHub ho nedávej!
