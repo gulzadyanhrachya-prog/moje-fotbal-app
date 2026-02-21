@@ -9,7 +9,7 @@ from thefuzz import process
 # ==============================================================================
 # 1. KONFIGURACE A STYLY
 # ==============================================================================
-st.set_page_config(page_title="Tennis Pro Analyst v10.0", layout="wide", page_icon="🎾")
+st.set_page_config(page_title="Tennis Pro Analyst v11.0", layout="wide", page_icon="🎾")
 
 st.markdown("""
 <style>
@@ -22,8 +22,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎾 Tennis AI: Full Schedule & Predictions")
-st.caption("Verze 10.0: Zobrazuje všechny zápasy (nejen top tipy)")
+st.title("🎾 Tennis AI: Robust Scraper & Predictions")
+st.caption("Verze 11.0: Opravený parser pro TennisExplorer (ignoruje reklamní texty)")
 
 # ==============================================================================
 # 2. NAČTENÍ DAT (JEFF SACKMANN DB)
@@ -220,7 +220,7 @@ def generate_markets(p1_name, p2_name, surface):
     return markets, s1, s2, pred
 
 # ==============================================================================
-# 4. SCRAPER (TENNIS EXPLORER)
+# 4. ROBUSTNÍ SCRAPER (TENNIS EXPLORER) - OPRAVENO
 # ==============================================================================
 @st.cache_data(ttl=1800)
 def scrape_schedule(date_obj):
@@ -233,41 +233,67 @@ def scrape_schedule(date_obj):
     except: return None
 
 def parse_schedule(df):
+    """
+    Robustní parser, který používá Regex k nalezení času,
+    protože TennisExplorer přidává do sloupce s časem reklamní texty.
+    """
     matches = []
     df = df.astype(str)
+    
     pending_p1 = None
     pending_time = None
     current_tour = "Unknown"
     
     for _, row in df.iterrows():
-        c0, c1 = str(row[0]), str(row[1])
+        # Převedeme řádek na seznam stringů pro snazší přístup
+        row_list = [str(x).strip() for x in row.values]
         
-        # Detekce turnaje (řádek obsahuje H2H)
-        if "H2H" in str(row.values):
-            current_tour = c0 if len(c0) > 2 else c1
+        # Sloupec 0 a 1 (někdy se to posouvá, ale obvykle 0=Time, 1=Name)
+        col0 = row_list[0]
+        col1 = row_list[1] if len(row_list) > 1 else ""
+        
+        # 1. DETEKCE TURNAJE
+        # Hledáme řádek, kde je "H2H" nebo "S" (Set)
+        if "H2H" in str(row_list):
+            # Název turnaje bývá v prvním neprázdném sloupci, který není jen číslo
+            if len(col0) > 3 and not col0.isdigit():
+                current_tour = col0
+            elif len(col1) > 3:
+                current_tour = col1
             pending_p1 = None
             continue
-        
-        # Detekce času (např. 14:30) nebo slova Live
-        is_time_row = (":" in c0 and len(c0) < 6) or "Live" in c0
-        
-        if is_time_row:
-            pending_time = c0.replace("Live", "").strip()
-            pending_p1 = re.sub(r'\(\d+\)', '', c1).strip()
-        elif pending_p1:
-            # Druhý řádek zápasu (soupeř)
-            p2 = re.sub(r'\(\d+\)', '', c1).strip()
             
-            # Validace jmen (aby to nebyl bordel)
-            if len(pending_p1) > 2 and len(p2) > 2:
+        # 2. DETEKCE ČASU (REGEX)
+        # Hledáme vzor HH:MM (např. 02:00, 14:30) kdekoliv v prvním sloupci
+        # Tím ignorujeme "Live streams..." balast
+        time_match = re.search(r'\d{1,2}:\d{2}', col0)
+        
+        if time_match:
+            # Našli jsme řádek se zápasem!
+            extracted_time = time_match.group(0)
+            
+            # Jméno hráče je obvykle ve sloupci 1
+            raw_name = col1
+            
+            # Čištění jména: "Paul T. (5)" -> "Paul T."
+            clean_name = re.sub(r'\(\d+\)', '', raw_name).replace("ret.", "").strip()
+            
+            if len(clean_name) < 2: continue # Ochrana proti prázdným řádkům
+            
+            if pending_p1 is None:
+                # První hráč z dvojice
+                pending_p1 = clean_name
+                pending_time = extracted_time
+            else:
+                # Druhý hráč -> Máme kompletní zápas
                 matches.append({
-                    "time": pending_time, 
-                    "tour": current_tour, 
-                    "p1": pending_p1, 
-                    "p2": p2
+                    "time": pending_time,
+                    "tour": current_tour,
+                    "p1": pending_p1,
+                    "p2": clean_name
                 })
-            pending_p1 = None
-            
+                pending_p1 = None # Reset
+                
     return matches
 
 def find_db_player(name):
@@ -306,7 +332,6 @@ with tab1:
                     st.warning("Nenašel jsem žádné zápasy. Zkontroluj datum nebo strukturu webu.")
                     st.dataframe(raw_df.head())
                 else:
-                    # Počítadlo
                     st.info(f"Nalezeno {len(matches)} zápasů v programu. Hledám historii...")
                     
                     results = []
@@ -364,12 +389,11 @@ with tab1:
                     if top_tips_count == 0:
                         st.info("Žádné silné tipy (>60%) pro dnešní den.")
 
-                    # --- SEKCE 2: VŠECHNY ZÁPASY (NOVÉ!) ---
+                    # --- SEKCE 2: VŠECHNY ZÁPASY ---
                     st.divider()
                     st.subheader(f"📋 Kompletní program ({len(results)} analyzovaných zápasů)")
                     
                     for res in results:
-                        # Zjistíme favorita pro zobrazení
                         prob = res['pred']['prob_p1']
                         winner = res['p1'] if prob > 0.5 else res['p2']
                         win_pct = int((prob if prob > 0.5 else 1-prob) * 100)
@@ -387,7 +411,6 @@ with tab1:
                             
                             st.markdown("---")
                             st.write("**Všechny trhy:**")
-                            # Tabulka všech trhů pro tento zápas
                             df_mkts = pd.DataFrame(res['markets'])
                             df_mkts['Kurz'] = (1 / df_mkts['prob']).round(2)
                             df_mkts['Důvěra'] = (df_mkts['prob'] * 100).astype(int).astype(str) + "%"
